@@ -1,0 +1,44 @@
+name: Enhancement
+description: Suggest improvements to existing ShadowJS features
+title: "[Enhancement]: "
+labels: ["enhancement", "improvement", "triage"]
+body:
+  - type: textarea
+    id: current-issue
+    attributes:
+      label: Current Issue
+      description: What is currently problematic or could be improved?
+      placeholder: "The current implementation of X is... It would be better if Y worked like..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-improvement
+    attributes:
+      label: Proposed Improvement
+      description: How should this be improved?
+      placeholder: "I suggest we improve this by..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: benefits
+    attributes:
+      label: Benefits
+      description: What benefits would this improvement provide?
+      placeholder: "This would improve developer experience by..."
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      description: Please confirm these items before submitting
+      options:
+        - label: I have checked for similar enhancement requests
+          required: true
+        - label: I have described the current issue and proposed improvement clearly
+          required: true
+        - label: I have provided specific benefits of the enhancement
+          required: true

@@ -1,0 +1,65 @@
+{
+  "name": "@shadow-js/vite",
+  "version": "0.2.0",
+  "description": "Vite plugin for ShadowJS (JSX + transforms via SWC)",
+  "author": "Jehaad AL-Johani",
+  "homepage": "https://github.com/shadowjs-dev/shadow#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shadowjs-dev/shadow.git",
+    "directory": "packages/vite"
+  },
+  "bugs": {
+    "url": "https://github.com/shadowjs-dev/shadow/issues"
+  },
+  "keywords": [
+    "shadowjs",
+    "vite",
+    "plugin",
+    "jsx",
+    "swc"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@shadow-js/compiler": "^0.2.0"
+  },
+  "peerDependencies": {
+    "@swc/core": "^1.3.96",
+    "@shadow-js/core": "^0.1.0",
+    "vite": "^7.1.3"
+  },
+  "devDependencies": {
+    "@swc/core": "^1.13.3",
+    "@types/node": "^22.5.4",
+    "tsup": "^8.1.0",
+    "typescript": "^5.5.4"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

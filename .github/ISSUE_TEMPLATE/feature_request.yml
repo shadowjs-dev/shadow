@@ -1,0 +1,177 @@
+name: Feature Request
+description: Suggest a new feature or enhancement for ShadowJS
+title: "[Feature]: "
+labels: ["enhancement", "feature-request", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Feature Request
+
+        Thanks for suggesting a new feature! We love hearing from our community about how we can improve ShadowJS.
+
+        **Before submitting:**
+        - [ ] Check if the feature already exists in [existing issues](https://github.com/shadow-js/shadow/issues)
+        - [ ] Make sure your request aligns with ShadowJS's goals of fine-grained reactivity and JSX-first design
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: |
+        What problem does this feature solve?
+
+        **Tip**: Be specific about the pain point. Consider:
+        - Current workarounds that are cumbersome
+        - Missing functionality that would improve workflow
+        - Performance issues or limitations
+        - Developer experience problems
+      placeholder: |
+        I'm always frustrated when...
+        Currently, I have to...
+        It would be great if ShadowJS could...
+
+        Example:
+        I'm frustrated when building forms because ShadowJS doesn't provide built-in
+        form validation and state management. Currently, I have to manually track
+        form state, validation errors, and submission states, which leads to
+        repetitive boilerplate code in every form component.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe the solution you'd like to see.
+      placeholder: |
+        I would like ShadowJS to provide...
+        This could be implemented by adding...
+        The API could look like this...
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternative Solutions
+      description: Have you considered any alternative solutions or workarounds?
+      placeholder: |
+        I've tried using...
+        Another approach could be...
+        I could work around this by...
+    validations:
+      required: false
+
+  - type: textarea
+    id: use-cases
+    attributes:
+      label: Use Cases
+      description: Provide specific use cases where this feature would be valuable.
+      placeholder: |
+        This would be useful for:
+        1. Building complex forms with validation
+        2. Creating reusable component libraries
+        3. Implementing real-time collaborative features
+        4. Developing large-scale applications
+    validations:
+      required: true
+
+  - type: textarea
+    id: api-example
+    attributes:
+      label: Proposed API
+      description: If applicable, provide examples of how you envision the API working.
+      placeholder: |
+        ```tsx
+        // Example usage
+        const [formData, setFormData] = useForm({
+          name: '',
+          email: '',
+          password: ''
+        });
+
+        // Or perhaps a new hook
+        const { data, loading, error } = useQuery('users');
+        ```
+
+        ```tsx
+        // Component example
+        <Form validation={validationSchema}>
+          <Field name="email" component={EmailInput} />
+          <Field name="password" component={PasswordInput} />
+        </Form>
+        ```
+      render: typescript
+    validations:
+      required: false
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Feature Category
+      description: What category does this feature fall into?
+      options:
+        - Reactivity System (stores, effects, lifecycle)
+        - Component System (built-in components, JSX)
+        - Build Tools (compiler, Vite plugin)
+        - Developer Experience (TypeScript, debugging, tooling)
+        - Performance (optimization, memory management)
+        - Documentation (examples, guides, tutorials)
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How important is this feature to you?
+      options:
+        - Low (nice to have)
+        - Medium (would improve my workflow)
+        - High (blocks my current work)
+        - Critical (cannot proceed without this)
+    validations:
+      required: false
+
+  - type: textarea
+    id: implementation-notes
+    attributes:
+      label: Implementation Notes
+      description: Any technical details or considerations for implementation.
+      placeholder: |
+        Technical considerations:
+        - Should maintain backward compatibility
+        - Could leverage existing reactive system
+        - Might require changes to compiler
+        - Should include comprehensive tests
+    validations:
+      required: false
+
+  - type: textarea
+    id: related-issues
+    attributes:
+      label: Related Issues
+      description: Link to any related issues or discussions.
+      placeholder: |
+        - Related to #123
+        - Discussed in [Discord thread](https://discord.com/channels/...)
+        - Similar to React's [useForm](https://react-hook-form.com/)
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      description: Please confirm these items before submitting
+      options:
+        - label: I have checked for existing feature requests
+          required: true
+        - label: I have provided a clear problem description and solution
+          required: true
+        - label: I have included specific use cases
+          required: true
+        - label: I am willing to contribute to the implementation (optional)
+          required: false

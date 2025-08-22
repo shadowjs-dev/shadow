@@ -1,0 +1,2 @@
+# Allow users to create blank issues for edge cases not covered by templates
+blank_issues_enabled: true
