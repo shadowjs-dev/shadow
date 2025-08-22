@@ -1,4 +1,4 @@
-<img src="https://github.com/jehaad1/ShadowJS/blob/main/banner.png?raw=true" style="width: 100%">
+<img src="https://github.com/shadowjs-dev/shadow/blob/main/banner.png?raw=true" style="width: 100%">
 
 # ShadowJS
 
