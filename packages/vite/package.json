@@ -1,6 +1,6 @@
 {
   "name": "@shadow-js/vite",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Vite plugin for ShadowJS (JSX + transforms via SWC)",
   "author": "Jehaad AL-Johani",
   "homepage": "https://github.com/shadowjs-dev/shadow#readme",
@@ -51,7 +51,7 @@
   "peerDependencies": {
     "@swc/core": "^1.3.96",
     "@shadow-js/core": "^0.1.0",
-    "vite": "^7.1.3"
+    "vite": "^5.1.4"
   },
   "devDependencies": {
     "@swc/core": "^1.13.3",

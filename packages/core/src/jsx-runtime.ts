@@ -21,7 +21,7 @@ declare global {
     /**
      * What your jsx() returns in ShadowJS: DOM Node.
      */
-    // @ts-expect-error - after build, 'Element' was also declared here.
+    // @ts-expect-error - TypeScript sees a conflict with generated declaration files, but this is intentional
     type Element =
       | Node
       | globalThis.Element
