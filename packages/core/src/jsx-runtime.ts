@@ -15,19 +15,15 @@ export { Fragment } from "./runtime/Fragment";
 // Provide JSX namespace here so TypeScript finds it via jsxImportSource
 export {};
 
+export type ShadowElement =
+  | Node
+  | globalThis.Element
+  | DocumentFragment
+  | Promise<Node | globalThis.Element | DocumentFragment>;
+
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace JSX {
-    /**
-     * What your jsx() returns in ShadowJS: DOM Node.
-     */
-    // @ts-expect-error - TypeScript sees a conflict with generated declaration files, but this is intentional
-    type Element =
-      | Node
-      | globalThis.Element
-      | DocumentFragment
-      | Promise<Node | globalThis.Element | DocumentFragment>;
-
     /**
      * Accept any HTML/SVG tag initially. Frameworks usually refine this.
      */
@@ -39,7 +35,7 @@ declare global {
      * Common JSX attributes recognized by ShadowJS.
      */
     interface IntrinsicAttributes {
-      ref?: (element: Element) => void | { current: Element | null };
+      ref?: (element: import("./jsx-runtime").ShadowElement) => void | { current: import("./jsx-runtime").ShadowElement | null };
     }
   }
 }
