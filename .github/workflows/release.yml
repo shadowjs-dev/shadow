@@ -68,7 +68,7 @@ jobs:
     needs: [plan, native]
     if: ${{ needs.plan.outputs.pending == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     permissions:
       contents: write
       id-token: write
