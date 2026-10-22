@@ -1,0 +1,33 @@
+{
+  "name": "shadow-repository",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "workspaces": [
+    "packages/compiler",
+    "packages/core",
+    "packages/web",
+    "packages/vite"
+  ],
+  "scripts": {
+    "build": "npm run build -w @shadow-js/compiler && npm run build -w @shadow-js/core && npm run build -w @shadow-js/web && npm run build -w @shadow-js/vite",
+    "typecheck": "npm run typecheck -w @shadow-js/compiler && npm run typecheck -w @shadow-js/core && npm run typecheck -w @shadow-js/web && npm run typecheck -w @shadow-js/vite",
+    "lint": "biome check .",
+    "test": "vitest run --project unit --project dom --project server",
+    "test:gc": "vitest run --project gc --passWithNoTests",
+    "test:perf": "vitest run --project perf --passWithNoTests",
+    "build:binaries": "npm run build:binaries -w @shadow-js/compiler",
+    "check": "npm run lint && npm run build && npm run typecheck && npm run build:binaries && npm test && npm run test:perf && npm run test:gc"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "@types/node": "^24.0.0",
+    "fast-check": "^4.10.2",
+    "happy-dom": "^21.0.3",
+    "tsdown": "0.23.0",
+    "typescript": "7.0.2",
+    "vitest": "5.0.3"
+  }
+}

@@ -1,0 +1,47 @@
+[workspace]
+resolver = "3"
+members = ["crates/shadow-compiler", "crates/shadow-compiler-node", "crates/shadow-compiler-wasm"]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2024"
+rust-version = "1.97.0"
+license = "MIT"
+repository = "https://github.com/shadowjs-dev/shadow"
+homepage = "https://shadowjs.net/guides/compiler/"
+
+[workspace.dependencies]
+oxc_allocator = "=0.153.0"
+oxc_ast = "=0.153.0"
+oxc_ast_visit = "=0.153.0"
+oxc_parser = { version = "=0.153.0", default-features = false }
+oxc_span = "=0.153.0"
+oxc_syntax = "=0.153.0"
+oxc_index = "=5.0.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+flate2 = "1"
+proptest = "1"
+mimalloc = { version = "0.1", default-features = false }
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = false
+
+[profile.bench]
+inherits = "release"

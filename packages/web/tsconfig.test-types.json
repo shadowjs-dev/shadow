@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "preserve",
+    "jsxImportSource": "@shadow-js/web",
+    "noEmit": true,
+    "paths": {
+      "@shadow-js/web/jsx-runtime": ["./src/jsx-runtime.ts"],
+      "@shadow-js/web": ["./src/index.ts"]
+    }
+  },
+  "include": ["test-types"]
+}

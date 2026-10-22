@@ -1,0 +1,4 @@
+# Build output of the Rust crates: the addon of the host platform and the WebAssembly module.
+/npm/
+/wasm/
+/tools/real-files.local.json

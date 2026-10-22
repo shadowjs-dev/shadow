@@ -1,0 +1,22 @@
+[package]
+name = "shadow-compiler-wasm"
+description = "WebAssembly build of the ShadowJS compiler, the fallback for platforms without a native binary."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[lib]
+name = "shadow_compiler_wasm"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+shadow-compiler = { path = "../shadow-compiler" }
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

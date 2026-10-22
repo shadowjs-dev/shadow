@@ -1,0 +1,16 @@
+{
+  "name": "@shadow-js/compiler-bench",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Compiler benchmark: ShadowJS compilers against babel-preset-solid and oxc-transform. Its own npm install, outside the root workspaces.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "bench": "node run.mjs"
+  },
+  "devDependencies": {
+    "@babel/core": "7.29.7",
+    "babel-preset-solid": "1.9.16",
+    "oxc-transform": "0.154.0"
+  }
+}

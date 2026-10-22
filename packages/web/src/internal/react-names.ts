@@ -1,0 +1,98 @@
+/**
+ * React spellings at run time: the attribute and event names that a props object (a spread) passes
+ * through. The compiler resolves the same names at build time (`packages/compiler/src/internal/
+ * react-names.ts`); a test keeps the two presentation lists equal, so keep them in step.
+ *
+ * @internal
+ */
+
+/**
+ * SVG presentation attributes are CSS properties, and React spells them in camelCase (`strokeWidth` is
+ * `stroke-width`). A camelCase name whose first word is one of these families is hyphenated. The
+ * families are the first words of the CSS properties SVG takes as attributes, so one rule covers the
+ * presentation list. The compiler's table (`packages/compiler/src/internal/react-names.ts`) lists the
+ * same names, and a test checks each one.
+ */
+const SVG_PROPERTY_FAMILY =
+  /^(?:alignment|baseline|clip|color|dominant|enable|fill|flood|font|glyph|image|letter|lighting|marker|mask|mix|paint|pointer|shape|stop|stroke|text|transform|unicode|vector|white|word|writing)(?=[A-Z])/;
+
+/**
+ * SVG attributes that start with a property family but are not CSS properties (`clipPathUnits`,
+ * `markerWidth`): they are camelCase in SVG, so they keep their case.
+ */
+const SVG_CAMEL_ATTRIBUTES: ReadonlySet<string> = new Set([
+  "clipPathUnits",
+  "glyphRef",
+  "markerHeight",
+  "markerUnits",
+  "markerWidth",
+  "maskContentUnits",
+  "maskUnits",
+  "textLength",
+]);
+
+/**
+ * The attribute name for a props key on an element: HTML names are lower case (what the parser and
+ * `setAttribute` write anyway, and what server markup needs); SVG presentation names are hyphenated,
+ * `xlinkHref` and `xmlLang` take their prefix, and other SVG names keep their case (`viewBox`).
+ * @internal
+ */
+export function attributeName(name: string, svg: boolean): string {
+  if (name === "className") return "class";
+  if (name === "htmlFor") return "for";
+  if (name === "httpEquiv") return "http-equiv";
+  if (name === "acceptCharset") return "accept-charset";
+  if (!svg) return name.toLowerCase();
+  if (name.includes(":")) return name;
+  const xlink = /^xlink([A-Z].*)$/.exec(name);
+  if (xlink !== null) return `xlink:${lowerFirst(xlink[1] ?? "")}`;
+  const xml = /^xml([A-Z].*)$/.exec(name);
+  if (xml !== null) return `xml:${lowerFirst(xml[1] ?? "")}`;
+  if (SVG_CAMEL_ATTRIBUTES.has(name) || !SVG_PROPERTY_FAMILY.test(name)) return name;
+  return name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+}
+
+function lowerFirst(text: string): string {
+  return text.replace(/^[A-Z]/, (letter) => letter.toLowerCase());
+}
+
+/** Props that have no DOM form: a spread ignores them (React's `key` and hydration flags). @internal */
+export const IGNORED_KEYS: ReadonlySet<string> = new Set([
+  "key",
+  "suppressHydrationWarning",
+  "suppressContentEditableWarning",
+]);
+
+/** The DOM event for a React-spelled prop (see the compiler's `eventPlan`). @internal */
+export interface EventPlan {
+  readonly type: string;
+  readonly capture: boolean;
+  readonly passive: boolean;
+}
+
+const CHANGE_ON_TYPES: ReadonlySet<string> = new Set(["checkbox", "radio", "file"]);
+
+/**
+ * Plans the DOM event for an `on*` prop. React's spellings follow React: `onChange` is the per-edit
+ * `input` event on text inputs and textareas and the `change` event on other controls; `onFocus` and
+ * `onBlur` bubble as `focusin` and `focusout`; a `...Capture` suffix binds the capture phase; `onWheel`
+ * is passive. A lower-case `on` spelling is the native event.
+ * @internal
+ */
+export function eventPlan(attribute: string, tag: string, type: string | null): EventPlan {
+  const reactSpelling = /^on[A-Z]/.test(attribute);
+  const capture = reactSpelling && attribute.endsWith("Capture");
+  const base = attribute.slice(2, capture ? -"Capture".length : undefined);
+  if (!reactSpelling) return { type: base.toLowerCase(), capture: false, passive: false };
+  const lower = base.toLowerCase();
+  if (lower === "change") {
+    const perEdit =
+      tag === "textarea" || (tag === "input" && (type === null || !CHANGE_ON_TYPES.has(type)));
+    return { type: perEdit ? "input" : "change", capture, passive: false };
+  }
+  if (lower === "focus") return { type: "focusin", capture, passive: false };
+  if (lower === "blur") return { type: "focusout", capture, passive: false };
+  if (lower === "doubleclick") return { type: "dblclick", capture, passive: false };
+  if (lower === "wheel") return { type: "wheel", capture, passive: !capture };
+  return { type: lower, capture, passive: false };
+}

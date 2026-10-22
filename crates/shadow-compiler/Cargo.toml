@@ -1,0 +1,34 @@
+[package]
+name = "shadow-compiler"
+description = "The ShadowJS JSX compiler: parses with oxc and generates DOM and SSR code."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[lib]
+name = "shadow_compiler"
+
+[dependencies]
+oxc_allocator.workspace = true
+oxc_ast.workspace = true
+oxc_ast_visit.workspace = true
+oxc_parser.workspace = true
+oxc_span.workspace = true
+oxc_syntax.workspace = true
+oxc_index.workspace = true
+
+[dev-dependencies]
+serde.workspace = true
+serde_json.workspace = true
+flate2.workspace = true
+libc = "0.2"
+proptest.workspace = true
+mimalloc.workspace = true
+oxc_allocator.workspace = true
+
+[lints]
+workspace = true

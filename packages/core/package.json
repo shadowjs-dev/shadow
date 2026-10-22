@@ -1,0 +1,127 @@
+{
+  "name": "@shadow-js/core",
+  "version": "1.0.0",
+  "description": "Signals, stores, memos and effects that update exactly what changed",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/dev/index.d.ts",
+      "browser": {
+        "development": "./dist/dev/index.js",
+        "default": "./dist/prod/index.js"
+      },
+      "node": {
+        "development": "./dist/server-dev/index.js",
+        "default": "./dist/server/index.js"
+      },
+      "worker": {
+        "development": "./dist/server-dev/index.js",
+        "default": "./dist/server/index.js"
+      },
+      "deno": {
+        "development": "./dist/server-dev/index.js",
+        "default": "./dist/server/index.js"
+      },
+      "bun": {
+        "development": "./dist/server-dev/index.js",
+        "default": "./dist/server/index.js"
+      },
+      "development": "./dist/dev/index.js",
+      "default": "./dist/prod/index.js"
+    },
+    "./store": {
+      "types": "./dist/dev/store/index.d.ts",
+      "browser": {
+        "development": "./dist/dev/store/index.js",
+        "default": "./dist/prod/store/index.js"
+      },
+      "node": {
+        "development": "./dist/server-dev/store/index.js",
+        "default": "./dist/server/store/index.js"
+      },
+      "worker": {
+        "development": "./dist/server-dev/store/index.js",
+        "default": "./dist/server/store/index.js"
+      },
+      "deno": {
+        "development": "./dist/server-dev/store/index.js",
+        "default": "./dist/server/store/index.js"
+      },
+      "bun": {
+        "development": "./dist/server-dev/store/index.js",
+        "default": "./dist/server/store/index.js"
+      },
+      "development": "./dist/dev/store/index.js",
+      "default": "./dist/prod/store/index.js"
+    },
+    "./package.json": "./package.json",
+    "./extend": {
+      "types": "./dist/dev/extend/index.d.ts",
+      "browser": {
+        "development": "./dist/dev/extend/index.js",
+        "default": "./dist/prod/extend/index.js"
+      },
+      "node": {
+        "development": "./dist/server-dev/extend/index.js",
+        "default": "./dist/server/extend/index.js"
+      },
+      "worker": {
+        "development": "./dist/server-dev/extend/index.js",
+        "default": "./dist/server/extend/index.js"
+      },
+      "deno": {
+        "development": "./dist/server-dev/extend/index.js",
+        "default": "./dist/server/extend/index.js"
+      },
+      "bun": {
+        "development": "./dist/server-dev/extend/index.js",
+        "default": "./dist/server/extend/index.js"
+      },
+      "development": "./dist/dev/extend/index.js",
+      "default": "./dist/prod/extend/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsdown --config-loader native",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test-types.json",
+    "typecheck:types": "tsc -p tsconfig.test-types.json"
+  },
+  "homepage": "https://shadowjs.net/reference/core/",
+  "keywords": [
+    "shadowjs",
+    "core"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shadowjs-dev/shadow.git",
+    "directory": "packages/core"
+  },
+  "bugs": {
+    "url": "https://github.com/shadowjs-dev/shadow/issues"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "@shadow-js/compiler": "*",
+    "@shadow-js/web": "*",
+    "@types/node": "^24.0.0",
+    "fast-check": "^4.10.2",
+    "happy-dom": "^21.0.3",
+    "tsdown": "0.23.0",
+    "typescript": "7.0.2",
+    "vitest": "5.0.3"
+  }
+}

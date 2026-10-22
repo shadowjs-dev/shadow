@@ -1,0 +1,88 @@
+{
+  "name": "@shadow-js/vite",
+  "version": "1.0.0",
+  "description": "A Vite plugin that compiles your JSX, builds for server rendering and sets up Vitest",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/dev/index.d.ts",
+      "development": "./dist/dev/index.js",
+      "default": "./dist/prod/index.js"
+    },
+    "./mdx": {
+      "types": "./dist/dev/mdx.d.ts",
+      "development": "./dist/dev/mdx.js",
+      "default": "./dist/prod/mdx.js"
+    },
+    "./mdx-env": {
+      "types": "./dist/mdx-env.d.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsdown --config-loader native && node scripts/copy-types.mjs",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@shadow-js/compiler": "1.0.0"
+  },
+  "peerDependencies": {
+    "vite": "^7.0.0 || ^8.0.0",
+    "@mdx-js/mdx": "^3.0.0",
+    "@shadow-js/web": "^1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "vite": {
+      "optional": true
+    },
+    "@mdx-js/mdx": {
+      "optional": true
+    },
+    "@shadow-js/web": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "@mdx-js/mdx": "3.1.1",
+    "@shadow-js/core": "*",
+    "@shadow-js/web": "*",
+    "@types/node": "^24.0.0",
+    "fast-check": "^4.10.2",
+    "happy-dom": "^21.0.3",
+    "remark-frontmatter": "5.0.0",
+    "remark-gfm": "4.0.1",
+    "remark-mdx-frontmatter": "6.0.0",
+    "tsdown": "0.23.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.3",
+    "vitest": "5.0.3"
+  },
+  "homepage": "https://shadowjs.net/guides/vite/",
+  "keywords": [
+    "shadowjs",
+    "vite"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shadowjs-dev/shadow.git",
+    "directory": "packages/vite"
+  },
+  "bugs": {
+    "url": "https://github.com/shadowjs-dev/shadow/issues"
+  }
+}

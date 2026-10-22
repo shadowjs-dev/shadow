@@ -1,0 +1,138 @@
+{
+  "name": "@shadow-js/web",
+  "version": "1.0.0",
+  "description": "A DOM renderer with no virtual DOM, plus control flow, server rendering and hydration",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/dev/index.d.ts",
+      "browser": {
+        "development": "./dist/dev/index.js",
+        "default": "./dist/prod/index.js"
+      },
+      "node": {
+        "development": "./dist/server-dev/index.js",
+        "default": "./dist/server/index.js"
+      },
+      "worker": {
+        "development": "./dist/server-dev/index.js",
+        "default": "./dist/server/index.js"
+      },
+      "deno": {
+        "development": "./dist/server-dev/index.js",
+        "default": "./dist/server/index.js"
+      },
+      "bun": {
+        "development": "./dist/server-dev/index.js",
+        "default": "./dist/server/index.js"
+      },
+      "development": "./dist/dev/index.js",
+      "default": "./dist/prod/index.js"
+    },
+    "./server": {
+      "types": "./dist/dev/server.d.ts",
+      "node": {
+        "development": "./dist/server-dev/server.js",
+        "default": "./dist/server/server.js"
+      },
+      "worker": {
+        "development": "./dist/server-dev/server.js",
+        "default": "./dist/server/server.js"
+      },
+      "deno": {
+        "development": "./dist/server-dev/server.js",
+        "default": "./dist/server/server.js"
+      },
+      "bun": {
+        "development": "./dist/server-dev/server.js",
+        "default": "./dist/server/server.js"
+      },
+      "development": "./dist/dev/server.js",
+      "default": "./dist/prod/server.js"
+    },
+    "./jsx-runtime": {
+      "types": "./dist/dev/jsx-runtime.d.ts",
+      "default": "./dist/prod/jsx-runtime.js"
+    },
+    "./jsx-dev-runtime": {
+      "types": "./dist/dev/jsx-dev-runtime.d.ts",
+      "default": "./dist/prod/jsx-dev-runtime.js"
+    },
+    "./package.json": "./package.json",
+    "./hmr": {
+      "types": "./dist/dev/hmr.d.ts",
+      "development": "./dist/dev/hmr.js",
+      "default": "./dist/prod/hmr.js"
+    },
+    "./extend": {
+      "types": "./dist/dev/extend.d.ts",
+      "browser": {
+        "development": "./dist/dev/extend.js",
+        "default": "./dist/prod/extend.js"
+      },
+      "node": {
+        "development": "./dist/server-dev/extend.js",
+        "default": "./dist/server/extend.js"
+      },
+      "worker": {
+        "development": "./dist/server-dev/extend.js",
+        "default": "./dist/server/extend.js"
+      },
+      "deno": {
+        "development": "./dist/server-dev/extend.js",
+        "default": "./dist/server/extend.js"
+      },
+      "bun": {
+        "development": "./dist/server-dev/extend.js",
+        "default": "./dist/server/extend.js"
+      },
+      "development": "./dist/dev/extend.js",
+      "default": "./dist/prod/extend.js"
+    }
+  },
+  "scripts": {
+    "build": "tsdown --config-loader native",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "@shadow-js/core": "^1.0.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "@shadow-js/compiler": "*",
+    "@shadow-js/core": "*",
+    "@types/node": "^24.0.0",
+    "fast-check": "^4.10.2",
+    "happy-dom": "^21.0.3",
+    "tsdown": "0.23.0",
+    "typescript": "7.0.2",
+    "vitest": "5.0.3"
+  },
+  "homepage": "https://shadowjs.net/reference/web/",
+  "keywords": [
+    "shadowjs",
+    "web"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shadowjs-dev/shadow.git",
+    "directory": "packages/web"
+  },
+  "bugs": {
+    "url": "https://github.com/shadowjs-dev/shadow/issues"
+  }
+}

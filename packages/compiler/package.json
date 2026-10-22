@@ -1,0 +1,95 @@
+{
+  "name": "@shadow-js/compiler",
+  "version": "1.0.0",
+  "description": "The ShadowJS JSX compiler: a Rust addon, WebAssembly and TypeScript, one API and identical output",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "files": [
+    "dist",
+    "wasm",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/dev/index.d.ts",
+      "browser": {
+        "development": "./dist/dev/javascript.js",
+        "default": "./dist/prod/javascript.js"
+      },
+      "worker": {
+        "development": "./dist/dev/javascript.js",
+        "default": "./dist/prod/javascript.js"
+      },
+      "node": {
+        "development": "./dist/dev/index.js",
+        "default": "./dist/prod/index.js"
+      },
+      "bun": {
+        "development": "./dist/dev/index.js",
+        "default": "./dist/prod/index.js"
+      },
+      "deno": {
+        "development": "./dist/dev/index.js",
+        "default": "./dist/prod/index.js"
+      },
+      "development": "./dist/dev/javascript.js",
+      "default": "./dist/prod/javascript.js"
+    },
+    "./javascript": {
+      "types": "./dist/dev/javascript.d.ts",
+      "development": "./dist/dev/javascript.js",
+      "default": "./dist/prod/javascript.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsdown --config-loader native",
+    "build:native": "node scripts/build-native.mjs",
+    "build:wasm": "node scripts/build-wasm.mjs",
+    "build:binaries": "node scripts/build-native.mjs && node scripts/build-wasm.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "bench": "node bench/run.mjs",
+    "link:platforms": "node scripts/link-platforms.mjs"
+  },
+  "dependencies": {
+    "entities": "^8.1.0",
+    "magic-string": "^1.4.3",
+    "oxc-parser": "0.153.0"
+  },
+  "homepage": "https://shadowjs.net/guides/compiler/",
+  "keywords": [
+    "shadowjs",
+    "compiler",
+    "jsx",
+    "rust",
+    "wasm"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shadowjs-dev/shadow.git",
+    "directory": "packages/compiler"
+  },
+  "bugs": {
+    "url": "https://github.com/shadowjs-dev/shadow/issues"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "@shadow-js/core": "*",
+    "@shadow-js/web": "*",
+    "@types/node": "^24.0.0",
+    "fast-check": "^4.10.2",
+    "happy-dom": "^21.0.3",
+    "tsdown": "0.23.0",
+    "typescript": "7.0.2",
+    "vitest": "5.0.3"
+  }
+}

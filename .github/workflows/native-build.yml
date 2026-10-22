@@ -1,0 +1,121 @@
+# Builds the Rust compiler for every platform it ships on, and the WebAssembly fallback, and keeps the results as artifacts
+# (`native-<platform>` and `native-wasm`). The release and rehearsal workflows call it and then pack or publish what it built.
+# It can also be run by hand to see that every target still builds. Nothing here publishes, pushes or needs a secret.
+name: native build
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  npm_config_fund: "false"
+  npm_config_audit: "false"
+  CARGO_TERM_COLOR: never
+
+jobs:
+  addon:
+    name: addon (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: aarch64-apple-darwin, key: darwin-arm64, runner: macos-latest, zig: false, load: true }
+          - { target: x86_64-apple-darwin, key: darwin-x64, runner: macos-latest, zig: false, load: false }
+          - { target: x86_64-pc-windows-msvc, key: win32-x64-msvc, runner: windows-latest, zig: false, load: true }
+          - { target: aarch64-pc-windows-msvc, key: win32-arm64-msvc, runner: windows-latest, zig: false, load: false }
+          - { target: x86_64-unknown-linux-gnu, key: linux-x64-gnu, runner: ubuntu-latest, zig: true, load: true }
+          - { target: aarch64-unknown-linux-gnu, key: linux-arm64-gnu, runner: ubuntu-latest, zig: true, load: false }
+          - { target: x86_64-unknown-linux-musl, key: linux-x64-musl, runner: ubuntu-latest, zig: true, load: false }
+          - { target: aarch64-unknown-linux-musl, key: linux-arm64-musl, runner: ubuntu-latest, zig: true, load: false }
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      # rust-toolchain.toml pins the compiler (the oxc crates need it); rustup installs it on the first command.
+      - name: Install the pinned Rust toolchain and the target
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-${{ matrix.target }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: cargo-${{ matrix.target }}-
+
+      - name: Install cargo-zigbuild (Linux cross builds)
+        if: ${{ matrix.zig }}
+        run: python3 -m pip install --user ziglang cargo-zigbuild
+
+      - name: Build the addon
+        shell: bash
+        run: node packages/compiler/scripts/build-native.mjs --target ${{ matrix.target }}${{ matrix.zig && ' --zig' || '' }}
+
+      # Only where the runner can run the addon: it must load.
+      - name: Load the addon
+        if: ${{ matrix.load }}
+        shell: bash
+        run: node -e "const addon = require('./packages/compiler/npm/${{ matrix.key }}/shadow-compiler.node'); console.log('loaded', Object.keys(addon).join(','))"
+
+      - name: Keep the platform package
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-${{ matrix.key }}
+          path: packages/compiler/npm/${{ matrix.key }}
+          if-no-files-found: error
+
+  wasm:
+    name: WebAssembly fallback
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      - name: Install the pinned Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Cache cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-wasm-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: cargo-wasm-
+
+      - name: Build
+        run: node packages/compiler/scripts/build-wasm.mjs
+
+      - name: Keep the WebAssembly build
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-wasm
+          path: packages/compiler/wasm
+          if-no-files-found: error
