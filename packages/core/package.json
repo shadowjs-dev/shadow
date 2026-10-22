@@ -117,7 +117,7 @@
     "@biomejs/biome": "2.5.15",
     "@shadow-js/compiler": "*",
     "@shadow-js/web": "*",
-    "@types/node": "^24.0.0",
+    "@types/node": "^26.6.5",
     "fast-check": "^4.10.2",
     "happy-dom": "^21.0.3",
     "tsdown": "0.23.0",
