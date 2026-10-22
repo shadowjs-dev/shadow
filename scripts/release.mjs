@@ -240,8 +240,17 @@ export async function publishMissing(
     else args.push("--provenance");
     if (dryRun) args.push("--dry-run");
     console.log(`${dryRun ? "would publish" : "publishing"} ${name}@${version}`);
-    const result = npm(args, { stdio: "inherit" });
-    if (result.status !== 0) throw new Error(`npm publish failed for ${name}@${version}`);
+    const result = npm(args, { stdio: ["inherit", "inherit", "pipe"] });
+    process.stderr.write(result.stderr ?? "");
+    // The first version of a package is staged and listed minutes later, so a run that publishes it, or a run that starts again after
+    // one that failed, can be told the version is there although the registry does not list it yet: that is a publish already done.
+    const already = /cannot publish over (?:the )?previously (?:published|staged)/i.test(
+      result.stderr ?? "",
+    );
+    if (result.status !== 0 && !already)
+      throw new Error(`npm publish failed for ${name}@${version}`);
+    if (already)
+      console.log(`${name}@${version} is already published; waiting for the registry to list it`);
     published.push(`${name}@${version}`);
     if (dryRun) continue;
     // npm can take several minutes to list the first version of a package it has not seen before (it scans it first); the next package of
