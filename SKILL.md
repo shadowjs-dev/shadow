@@ -5,7 +5,7 @@ description: "Work with @shadow-js/compiler, @shadow-js/core, @shadow-js/web, @s
 
 # shadow
 
-ShadowJS, a fine-grained reactive UI framework: the reactive core, the DOM and server renderer, the JSX compiler (a Rust addon, WebAssembly and TypeScript) and the Vite plugin. This repository publishes `@shadow-js/compiler`, `@shadow-js/core`, `@shadow-js/web`, `@shadow-js/vite` at version 1.0.0.
+ShadowJS, a fine-grained reactive UI framework: the reactive core, the DOM and server renderer, the JSX compiler (a Rust addon, WebAssembly and TypeScript) and the Vite plugin. This repository publishes `@shadow-js/compiler`, `@shadow-js/core`, `@shadow-js/web`, `@shadow-js/vite` at version 1.0.1.
 
 ## Where to read more
 
@@ -18,7 +18,7 @@ ShadowJS, a fine-grained reactive UI framework: the reactive core, the DOM and s
 
 ## @shadow-js/compiler
 
-Version 1.0.0. The ShadowJS JSX compiler: a Rust addon, WebAssembly and TypeScript, one API and identical output.
+Version 1.0.1. The ShadowJS JSX compiler: a Rust addon, WebAssembly and TypeScript, one API and identical output.
 
 ### Install
 
@@ -65,7 +65,7 @@ console.log(["native", "wasm", "javascript"].includes(getBackend().name));
 
 ## @shadow-js/core
 
-Version 1.0.0. Signals, stores, memos and effects that update exactly what changed.
+Version 1.0.1. Signals, stores, memos and effects that update exactly what changed.
 
 ### Install
 
@@ -106,7 +106,7 @@ createRoot((dispose) => {
 
 ## @shadow-js/web
 
-Version 1.0.0. A DOM renderer with no virtual DOM, plus control flow, server rendering and hydration.
+Version 1.0.1. A DOM renderer with no virtual DOM, plus control flow, server rendering and hydration.
 
 ### Install
 
@@ -118,7 +118,7 @@ npm install @shadow-js/web @shadow-js/core
 
 | Package | Range | Required |
 | --- | --- | --- |
-| `@shadow-js/core` | `^1.0.0` | yes |
+| `@shadow-js/core` | `^1.0.1` | yes |
 
 ### Import paths
 
@@ -149,7 +149,7 @@ export function Counter() {
 
 ## @shadow-js/vite
 
-Version 1.0.0. A Vite plugin that compiles your JSX, builds for server rendering and sets up Vitest.
+Version 1.0.1. A Vite plugin that compiles your JSX, builds for server rendering and sets up Vitest.
 
 ### Install
 
@@ -163,7 +163,7 @@ npm install -D @shadow-js/vite
 | --- | --- | --- |
 | `vite` | `^7.0.0 || ^8.0.0` | no |
 | `@mdx-js/mdx` | `^3.0.0` | no |
-| `@shadow-js/web` | `^1.0.0` | no |
+| `@shadow-js/web` | `^1.0.1` | no |
 
 ### Import paths
 

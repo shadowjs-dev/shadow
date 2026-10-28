@@ -1,6 +1,6 @@
 {
   "name": "@shadow-js/compiler",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "The ShadowJS JSX compiler: a Rust addon, WebAssembly and TypeScript, one API and identical output",
   "license": "MIT",
   "type": "module",
