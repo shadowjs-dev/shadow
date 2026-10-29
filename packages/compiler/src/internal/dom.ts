@@ -132,10 +132,22 @@ class Block {
   decls: string[] = [];
   ops: string[] = [];
   private counter = 0;
+  private readonly reg: Registry;
 
+  constructor(reg: Registry) {
+    this.reg = reg;
+  }
+
+  /**
+   * The next element variable. The block's expressions are the user's own text, so a name the module
+   * already uses (`_el$` in code that was compiled before) is skipped instead of shadowed.
+   */
   id(): string {
-    this.counter += 1;
-    return this.counter === 1 ? "_el$" : `_el$${this.counter}`;
+    for (;;) {
+      this.counter += 1;
+      const name = this.counter === 1 ? "_el$" : `_el$${this.counter}`;
+      if (!this.reg.isTaken(name)) return name;
+    }
   }
 }
 
@@ -207,36 +219,55 @@ function accessor(d: DomContext, e: ExprIR): string {
   return `() => ${wrapObjectLiteral(e.text, e.node)}`;
 }
 
-/** Wraps dynamic conditional tests in memos so a branch is only rebuilt when truthiness changes. */
+/**
+ * Wraps dynamic conditional tests in memos so a branch is only rebuilt when truthiness changes. A chain
+ * `a ? x : b ? y : c ? z : w` is followed along its alternates with a loop, not recursion: its length is the
+ * user's. The texts are generated in the order the recursive form had (every test, then the end of the
+ * chain, then the branches from the last to the first), which fixes the order helpers and templates are
+ * registered in.
+ */
 function planConditional(d: DomContext, node: AstNode, memoNames: string[]): string | null {
-  const inner = unwrapParens(node);
-  if (inner.type === "ConditionalExpression") {
-    const test = inner["test"];
-    const consequent = inner["consequent"];
-    const alternate = inner["alternate"];
-    if (!isNode(test) || !isNode(consequent) || !isNode(alternate)) return null;
-    if (!isDynamic(test, d.source) || !(containsJsx(consequent) || containsJsx(alternate)))
-      return null;
-    const name = conditionalName(memoNames.length);
-    memoNames.push(`const ${name} = ${d.reg.helper("memo")}(() => !!(${d.text(test)}));`);
-    const nested = planConditional(d, alternate, memoNames);
-    const alt = nested ?? d.text(alternate);
-    return `${name}() ? ${d.text(consequent)} : ${alt}`;
+  const links: Array<{ name: string; consequent: AstNode }> = [];
+  let tail: string | null = null;
+  let current = node;
+  for (;;) {
+    const inner = unwrapParens(current);
+    if (inner.type === "ConditionalExpression") {
+      const test = inner["test"];
+      const consequent = inner["consequent"];
+      const alternate = inner["alternate"];
+      if (
+        isNode(test) &&
+        isNode(consequent) &&
+        isNode(alternate) &&
+        isDynamic(test, d.source) &&
+        (containsJsx(consequent) || containsJsx(alternate))
+      ) {
+        const name = d.reg.memoName(memoNames.length);
+        memoNames.push(`const ${name} = ${d.reg.helper("memo")}(() => !!(${d.text(test)}));`);
+        links.push({ name, consequent });
+        current = alternate;
+        continue;
+      }
+    } else if (inner.type === "LogicalExpression" && inner["operator"] === "&&") {
+      const left = inner["left"];
+      const right = inner["right"];
+      if (isNode(left) && isNode(right) && isDynamic(left, d.source) && containsJsx(right)) {
+        const name = d.reg.memoName(memoNames.length);
+        memoNames.push(`const ${name} = ${d.reg.helper("memo")}(() => !!(${d.text(left)}));`);
+        tail = `${name}() && ${d.text(right)}`;
+      }
+    }
+    break;
   }
-  if (inner.type === "LogicalExpression" && inner["operator"] === "&&") {
-    const left = inner["left"];
-    const right = inner["right"];
-    if (!isNode(left) || !isNode(right)) return null;
-    if (!isDynamic(left, d.source) || !containsJsx(right)) return null;
-    const name = conditionalName(memoNames.length);
-    memoNames.push(`const ${name} = ${d.reg.helper("memo")}(() => !!(${d.text(left)}));`);
-    return `${name}() && ${d.text(right)}`;
+  if (links.length === 0) return tail;
+  // What ends the chain is not planned: its text is the source as written.
+  let result = tail ?? d.text(current);
+  for (let index = links.length - 1; index >= 0; index -= 1) {
+    const link = links[index] as { name: string; consequent: AstNode };
+    result = `${link.name}() ? ${d.text(link.consequent)} : ${result}`;
   }
-  return null;
-}
-
-function conditionalName(index: number): string {
-  return index === 0 ? "_c$" : `_c$${index + 1}`;
+  return result;
 }
 
 /** Value passed to `insert` for an expression child. */
@@ -262,13 +293,15 @@ function isConstantRef(d: DomContext, node: AstNode): boolean {
   return target.type === "Identifier" && d.immutable.has(String(target["name"]));
 }
 
-function refStatement(text: string, node: AstNode, constant: boolean): string {
+function refStatement(d: DomContext, text: string, node: AstNode, constant: boolean): string {
   const target = unwrapParens(node);
   const assignable =
     !constant && (target.type === "Identifier" || target.type === "MemberExpression");
+  // `text` is the user's expression and is read inside this method: its local must not be a name the module uses.
+  const local = d.reg.local("_ref$");
   return assignable
-    ? `ref(r$) {\nconst _ref$ = ${text};\ntypeof _ref$ === "function" ? _ref$(r$) : ${text} = r$;\n}`
-    : `ref(r$) {\nconst _ref$ = ${text};\ntypeof _ref$ === "function" && _ref$(r$);\n}`;
+    ? `ref(r$) {\nconst ${local} = ${text};\ntypeof ${local} === "function" ? ${local}(r$) : ${text} = r$;\n}`
+    : `ref(r$) {\nconst ${local} = ${text};\ntypeof ${local} === "function" && ${local}(r$);\n}`;
 }
 
 function propEntries(
@@ -297,7 +330,7 @@ function propEntries(
     }
     if (attr.name === "ref") {
       current().push(
-        refStatement(attr.expr.text, attr.expr.node, isConstantRef(d, attr.expr.node)),
+        refStatement(d, attr.expr.text, attr.expr.node, isConstantRef(d, attr.expr.node)),
       );
     } else if (attr.expr.dynamic || containsJsx(attr.expr.node)) {
       current().push(`get ${propertyKey(attr.name)}() {\n${returnStatement(d, attr.expr.text)}\n}`);
@@ -924,7 +957,7 @@ function walkElement(
 }
 
 function genElementRoot(d: DomContext, el: ElementIR): string {
-  const block = new Block();
+  const block = new Block(d.reg);
   const refs = new Map<ElementIR, boolean>();
   const rootVar = needsRef(el, refs) ? block.id() : null;
   const html = walkElement(d, el, rootVar, block, refs);

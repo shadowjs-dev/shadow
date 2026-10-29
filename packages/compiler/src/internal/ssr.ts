@@ -100,6 +100,24 @@ function escaped(d: DomContext, code: string): string {
   return `${d.reg.helper("escape")}(${code})`;
 }
 
+/**
+ * How the HTML parser reads the content of an element: `raw` for `script` and `style` (no tags, no entities),
+ * `escapable` for `title` and `textarea` (entities only). Neither can hold a comment, so the markers
+ * that delimit a dynamic child elsewhere would show up as text. SVG parses these names as ordinary elements.
+ */
+function textKind(el: ElementIR): "raw" | "escapable" | null {
+  if (el.ns !== "html") return null;
+  if (el.tag === "script" || el.tag === "style") return "raw";
+  return el.tag === "title" || el.tag === "textarea" ? "escapable" : null;
+}
+
+/** A dynamic child of a text-only element: written without markers, as the element's text requires. */
+function textHole(d: DomContext, el: ElementIR, kind: "raw" | "escapable", code: string): string {
+  return kind === "raw"
+    ? `${d.reg.helper("ssrRawText")}(${JSON.stringify(el.tag)}, ${code})`
+    : escaped(d, code);
+}
+
 function classSources(el: ElementIR): { statics: string[]; dynamic: string[] } {
   const statics: string[] = [];
   const dynamic: string[] = [];
@@ -282,6 +300,7 @@ function textContentOf(el: ElementIR): ExprIR | null {
 
 function serializeChildren(d: DomContext, el: ElementIR, parts: Parts): void {
   const raw = RAW_TEXT_ELEMENTS.has(el.tag);
+  const kind = textKind(el);
   for (const child of el.children) {
     switch (child.kind) {
       case "text":
@@ -303,11 +322,19 @@ function serializeChildren(d: DomContext, el: ElementIR, parts: Parts): void {
         serializeElement(d, child, parts, false);
         break;
       case "component":
+        if (kind !== null) {
+          parts.hole(textHole(d, el, kind, genComponent(d, child)));
+          break;
+        }
         parts.text("<!--[-->");
         parts.hole(escaped(d, genComponent(d, child)));
         parts.text("<!--]-->");
         break;
       case "slot":
+        if (kind !== null) {
+          parts.hole(textHole(d, el, kind, child.expr.text));
+          break;
+        }
         parts.text("<!--[-->");
         parts.hole(escaped(d, child.expr.text));
         parts.text("<!--]-->");

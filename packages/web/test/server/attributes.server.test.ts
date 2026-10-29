@@ -81,7 +81,6 @@ describe("ssrAttribute", () => {
       "action",
       "formaction",
       "xlink:href",
-      "srcdoc",
       "poster",
       "data",
       "HREF",

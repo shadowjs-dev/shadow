@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.2
+
+### Fixed
+
+- `shadow()` and `shadowMdx()` leave `?raw` and `?url` requests alone: they are a file's text or address, not source to compile.
+- `shadowMdx()` imports `Dynamic` from the `moduleName` it is given (the SSR entry `@shadow-js/web/server`, which has no `Dynamic`, still reads it from `@shadow-js/web`).
+
 ## 1.0.1
 
 ### Changed

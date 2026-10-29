@@ -164,8 +164,13 @@ export interface DomProps<T> {
   className?: Maybe<ClassValue>;
   /** Toggles class names by truthiness; only keys that changed are touched. */
   classList?: Maybe<Record<string, boolean | undefined>>;
-  /** A CSS text string, or a declaration object. */
-  style?: Maybe<string | CSSProperties>;
+  /**
+   * A CSS text string, a declaration object, or an array of them (not nested) that is written in
+   * order, so a later declaration wins; `null`, `undefined`, `false` and `""` items are skipped.
+   */
+  style?: Maybe<
+    string | CSSProperties | ReadonlyArray<string | CSSProperties | null | undefined | false>
+  >;
 }
 
 /**

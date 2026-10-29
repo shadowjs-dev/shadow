@@ -41,11 +41,11 @@ export function resolveValue(value: unknown): unknown {
   return current;
 }
 
-/** Writes the markup for one resolved value that is not an array. */
-function appendLeaf(value: unknown, out: string[]): void {
+/** Writes the markup for one resolved value that is not an array; `text` encodes the text of a string. */
+function appendLeaf(value: unknown, out: string[], text: (value: string) => string): void {
   if (value === null || value === undefined || typeof value === "boolean") return;
   if (typeof value === "string") {
-    out.push(escapeHtml(value));
+    out.push(text(value));
     return;
   }
   // Numbers and bigints never contain markup characters.
@@ -70,7 +70,7 @@ function appendLeaf(value: unknown, out: string[]): void {
     }
     return;
   }
-  out.push(escapeHtml(String(value)));
+  out.push(text(String(value)));
 }
 
 /**
@@ -101,6 +101,15 @@ function appendLeaf(value: unknown, out: string[]): void {
  */
 // biome-ignore lint/suspicious/noShadowRestrictedNames: the name "escape" is part of the compiler contract (SSR output).
 export function escape(value: unknown): string {
+  return render(value, escapeHtml);
+}
+
+/**
+ * {@link escape} with the encoding of strings left to the caller: the walk over accessors, arrays and
+ * trusted nodes that every kind of text shares (an element's text is encoded one way, a script's another).
+ * @internal
+ */
+export function render(value: unknown, text: (value: string) => string): string {
   const out: string[] = [];
   const frames: unknown[][] = [];
   const cursors: number[] = [];
@@ -114,7 +123,7 @@ export function escape(value: unknown): string {
       frames.push(resolved);
       cursors.push(0);
     } else {
-      appendLeaf(resolved, out);
+      appendLeaf(resolved, out, text);
     }
     // Find the next item, closing every array that has no items left.
     let next: unknown;

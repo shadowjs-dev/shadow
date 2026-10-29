@@ -92,10 +92,15 @@ export function className(el: Element, value: unknown): void {
   applyClass(el, value, el.namespaceURI !== HTML_NS);
 }
 
-/** Narrows an object value to a record of keys; arrays and primitives are not class maps. */
-function asRecord(value: unknown): Record<string, unknown> | undefined {
+/** Narrows an object value to a record of keys; arrays and primitives are not class maps. @internal */
+export function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
   return value as Record<string, unknown>;
+}
+
+/** Whether `key` is switched on in `map`: own properties only, so a key named `constructor` reads as it was written. */
+function enabled(map: Record<string, unknown>, key: string): boolean {
+  return Object.hasOwn(map, key) && Boolean(map[key]);
 }
 
 /**
@@ -127,8 +132,10 @@ export function classList(
   const before: Record<string, unknown> = prev ?? {};
   const keys = new Set([...Object.keys(before), ...Object.keys(next)]);
   for (const key of keys) {
-    const now = Boolean(next[key]);
-    const was = Boolean(before[key]);
+    // Own properties only: `next["constructor"]` would otherwise read Object.prototype's function
+    // and a class with that name could never be switched on.
+    const now = enabled(next, key);
+    const was = enabled(before, key);
     if (now === was) continue;
     for (const token of key.split(/\s+/)) {
       if (token !== "") el.classList.toggle(token, now);
@@ -184,11 +191,15 @@ export function setStyleProperty(el: HTMLElement | SVGElement, name: string, val
  *
  * @param el HTML or SVG element.
  * @param value An object of properties (camelCase, kebab-case or custom names). A string replaces
- * `cssText`. `null`, `undefined` and `false` remove the `style` attribute.
+ * `cssText`. An array of strings and objects (not nested; `null`, `undefined`, `false` and `""`
+ * items are skipped) is written in order, so a later declaration wins, exactly as `ssrStyle` writes it
+ * on the server. `null`, `undefined` and `false` remove the `style` attribute.
  * @param prev The value returned by the previous call. Undefined (the first call) diffs against an
- * empty style. When it is a string, `cssText` is cleared before the object is written.
+ * empty style. When it is a string or an array, `cssText` is cleared before the object is written.
  * @returns What to pass back as `prev` next time: a shallow copy of an object value, otherwise
  * `value` itself.
+ * @throws TypeError (production message `SHADOW_STYLE_ITEM`) when an array holds a nested array or a
+ * value that is not a string or an object.
  * @example
  * import { style } from "@shadow-js/web";
  *
@@ -207,9 +218,28 @@ export function style(el: HTMLElement | SVGElement, value: unknown, prev?: unkno
     el.style.cssText = String(value);
     return value;
   }
+  if (Array.isArray(value)) {
+    // Not diffed: a string in the array can set any property, so the whole style is written again, in
+    // order (a later declaration wins, as on the server).
+    el.style.cssText = "";
+    for (const item of value) {
+      if (typeof item === "string") {
+        el.style.cssText += `;${item}`;
+      } else if (item !== null && item !== undefined && item !== false) {
+        if (typeof item !== "object" || Array.isArray(item)) {
+          throw new TypeError(
+            __DEV__ ? "style(): an array holds only strings and objects." : "SHADOW_STYLE_ITEM",
+          );
+        }
+        style(el, item, {});
+      }
+    }
+    return value;
+  }
   const next = { ...(value as Record<string, unknown>) };
   const before = asRecord(prev) ?? {};
-  if (typeof prev === "string") el.style.cssText = "";
+  // What a string or an array wrote is unknown, so it is cleared before the object is written.
+  if (typeof prev === "string" || Array.isArray(prev)) el.style.cssText = "";
   const keys = new Set([...Object.keys(before), ...Object.keys(next)]);
   for (const key of keys) {
     if (Object.is(before[key], next[key])) continue;

@@ -24,7 +24,11 @@ function valueText(value: unknown): string {
  * @internal
  */
 export function textareaContent(value: unknown): string {
-  const html = escapeHtml(valueText(resolveValue(value)));
+  return keepLeadingNewline(escapeHtml(valueText(resolveValue(value))));
+}
+
+/** Content markup of a textarea with the line break its parser would drop kept. @internal */
+export function keepLeadingNewline(html: string): string {
   const first = html.charAt(0);
   return first === "\n" || first === "\r" ? `\n${html}` : html;
 }

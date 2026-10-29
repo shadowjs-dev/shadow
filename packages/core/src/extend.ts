@@ -24,6 +24,7 @@ import {
 import {
   Computation,
   hasObservers,
+  isEqual,
   markObservers,
   observersOf,
   readMemo,
@@ -221,7 +222,8 @@ export function runInScope<T>(
  *
  * @param value Initial value.
  * @param equals Decides whether a write is a change: readers are notified only when it returns
- * `false`. `false` notifies on every write.
+ * `false`. `false` notifies on every write. It runs untracked (from `writeSignal`, and from a memo's
+ * own `equals`), so what it reads is not a dependency of the writer or the reader.
  * @param name Label shown by devtools. Undefined leaves the signal unnamed.
  * @returns The signal node. It has no owner: it lives as long as something references it.
  * @example
@@ -278,7 +280,7 @@ export function writeSignal<T>(signal: Signal<T>, next: T, options?: WriteOption
     throw new ShadowError("WRITE_IN_MEMO");
   }
   const equals = signal.equals;
-  if (equals !== false && equals(signal.value, next)) return false;
+  if (equals !== false && isEqual(equals, signal.value, next)) return false;
   signal.value = next;
   if (__DEV__) {
     report(DEVTOOLS_EVENT.SIGNAL_WRITTEN, signal, next, rt.running, observersOf(signal));
@@ -334,12 +336,12 @@ export interface ComputationOptions {
    * returns `false`, and `false` always propagates. Ignored for effects.
    * @default Object.is
    */
-  equals?: Equals<unknown>;
+  equals?: Equals<unknown> | undefined;
   /**
    * Label shown by devtools and diagnostics.
    * @default undefined (the node is unnamed)
    */
-  name?: string;
+  name?: string | undefined;
   /**
    * Effects: run in the render phase, synchronously at creation and before user effects in each
    * flush. Ignored for memos.
@@ -355,19 +357,19 @@ export interface ComputationOptions {
    * Memos: do not compute until the first read.
    * @default false (the memo computes once at creation)
    */
-  lazy?: boolean;
+  lazy?: boolean | undefined;
   /**
    * Memos that run component setup (such as a hot-reload wrapper): writing signals inside is
    * legitimate there, so the dev-mode write guard stays off.
    * @default false
    */
-  allowWrites?: boolean;
+  allowWrites?: boolean | undefined;
   /**
    * Effects: second stage, run untracked with the value `fn` computed and the previous one. It may
    * return a cleanup function.
    * @default undefined (`fn` is the whole effect)
    */
-  apply?: (value: never, previous: never) => unknown;
+  apply?: ((value: never, previous: never) => unknown) | undefined;
   /**
    * Owner to attach to. `null` creates a node that no owner disposes.
    * @default the current owner
@@ -406,23 +408,23 @@ export interface ComputationOptions {
  */
 export function createComputation(options: ComputationOptions): Computation {
   const owner = options.owner === undefined ? rt.owner : options.owner;
-  if (options.kind === "memo") {
-    const node = new Computation(
-      owner,
-      KIND_MEMO,
-      FLAG_UNINIT | (options.allowWrites === true ? FLAG_ALLOW_WRITES : 0),
-      options.fn,
-      options.equals ?? Object.is,
-      options.name,
-    );
+  const memo = options.kind === "memo";
+  const node = new Computation(
+    owner,
+    memo ? KIND_MEMO : KIND_EFFECT,
+    memo
+      ? FLAG_UNINIT | (options.allowWrites === true ? FLAG_ALLOW_WRITES : 0)
+      : (options.render === true ? FLAG_RENDER : 0) |
+          (options.defer === true ? FLAG_DEFER : 0) |
+          (options.lane === true ? FLAG_LANE : 0),
+    options.fn,
+    memo ? (options.equals ?? Object.is) : false,
+    options.name,
+  );
+  if (memo) {
     if (options.lazy !== true) updateIfNecessary(node);
     return node;
   }
-  const flags =
-    (options.render === true ? FLAG_RENDER : 0) |
-    (options.defer === true ? FLAG_DEFER : 0) |
-    (options.lane === true ? FLAG_LANE : 0);
-  const node = new Computation(owner, KIND_EFFECT, flags, options.fn, false, options.name);
   node.apply = options.apply ?? null;
   if (options.render === true) {
     // A suspended render effect keeps its DOM and waits on its own: its creator completes normally

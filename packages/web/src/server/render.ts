@@ -2,7 +2,7 @@ import { createRoot, type ResourceCache, ResourceCacheContext } from "@shadow-js
 import { attachRootErrors, type RootErrorOptions } from "../control-flow/root-errors";
 import { runWithServerHead, type ServerHead } from "../head/server-head";
 import { createRootScope, resourceKey, withScope } from "../internal/hydration-scope";
-import { SsrError } from "./errors";
+import { MAX_TIMER_MS, SsrError } from "./errors";
 // biome-ignore lint/suspicious/noShadowRestrictedNames: the name "escape" is part of the compiler contract (SSR output).
 import { escape } from "./escape";
 import {
@@ -57,7 +57,8 @@ export interface RenderOptions {
  */
 export interface AsyncRenderOptions extends RenderOptions {
   /**
-   * Upper bound for the whole render, in milliseconds: a positive finite number.
+   * Upper bound for the whole render, in milliseconds: a positive finite number. Values above the
+   * timer range (2147483647, about 24.8 days) count as 2147483647.
    * @default 10000
    */
   readonly timeoutMs?: number;
@@ -383,10 +384,13 @@ export async function renderToStringAsync(
   const job: Job = { canceled: false, roots: [] };
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expired = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => {
-      job.canceled = true;
-      reject(new SsrError("SSR_TIMEOUT", `The render did not finish within ${timeoutMs} ms.`));
-    }, timeoutMs);
+    timer = setTimeout(
+      () => {
+        job.canceled = true;
+        reject(new SsrError("SSR_TIMEOUT", `The render did not finish within ${timeoutMs} ms.`));
+      },
+      Math.min(timeoutMs, MAX_TIMER_MS),
+    );
   });
   try {
     const portals = portalCollectorFor(options?.portals);

@@ -1,5 +1,6 @@
 import { CompileError, type CompilerPlugin, compile, validatePlugins } from "@shadow-js/compiler";
 import type { Plugin } from "vite";
+import { moduleFile } from "./internal/ids";
 
 /**
  * `shadowMdx()`: a Vite plugin that turns `.mdx` (and `.md`) files into ShadowJS components. MDX is compiled to JSX by
@@ -69,7 +70,11 @@ export interface ShadowMdxOptions {
   readonly mdx?: string | MdxCompile;
   /** Compiler plugins that run on the JSX of every MDX file (see `ShadowPluginOptions.plugins`). */
   readonly plugins?: readonly CompilerPlugin[];
-  /** Module the compiled code imports its runtime helpers from. Default `"@shadow-js/web"` (`"@shadow-js/web/server"` for SSR). */
+  /**
+   * Module the compiled code imports its runtime helpers from. Default `"@shadow-js/web"` (`"@shadow-js/web/server"` for SSR).
+   * With `elements: "overridable"` the file also imports `Dynamic` from it, so a custom module must export `Dynamic`;
+   * `"@shadow-js/web/server"` has none, so `Dynamic` is then imported from `"@shadow-js/web"`.
+   */
   readonly moduleName?: string;
 }
 
@@ -87,6 +92,17 @@ function isNode(value: unknown): value is EsNode {
   );
 }
 
+/**
+ * The module `Dynamic` is imported from: the one `moduleName` names, so a project that points the runtime at
+ * its own module (an alias, a re-export) does not need `@shadow-js/web` resolvable as well. The one exception
+ * is the SSR helpers entry `@shadow-js/web/server`: it holds the server helpers and no `Dynamic`, which the
+ * main entry provides (and Vite resolves to its server build in an SSR build).
+ */
+function dynamicSourceOf(moduleName: string | undefined): string {
+  if (moduleName === undefined || moduleName === "@shadow-js/web/server") return "@shadow-js/web";
+  return moduleName;
+}
+
 /** The identifier `@mdx-js/mdx` binds the element lookup table to. */
 const LOOKUP = "_components";
 /** The local name of `Dynamic`: it cannot clash with a name the file exports or imports. */
@@ -97,7 +113,10 @@ const DYNAMIC = "_ShadowDynamic";
  * `<Dynamic component={_components.h1}>` for `"overridable"`. The lookup yields a string for a default element and a
  * function for an override, and a ShadowJS component tag must be a function.
  */
-function elementsPlugin(mode: "overridable" | "static"): () => (tree: EsNode) => void {
+function elementsPlugin(
+  mode: "overridable" | "static",
+  dynamicSource: string,
+): () => (tree: EsNode) => void {
   return () => (tree) => {
     let rewritten = 0;
     const pending: unknown[] = [tree];
@@ -152,7 +171,7 @@ function elementsPlugin(mode: "overridable" | "static"): () => (tree: EsNode) =>
             local: { type: "Identifier", name: DYNAMIC },
           },
         ],
-        source: { type: "Literal", value: "@shadow-js/web", raw: '"@shadow-js/web"' },
+        source: { type: "Literal", value: dynamicSource, raw: JSON.stringify(dynamicSource) },
         attributes: [],
       });
     }
@@ -245,8 +264,8 @@ export function shadowMdx(options: ShadowMdxOptions = {}): Plugin {
       dev = env.command === "serve";
     },
     async transform(code, id, transformOptions) {
-      const file = id.split("?")[0] ?? id;
-      if (id.startsWith("\0") || exclude.test(file) || !include.test(file)) return null;
+      const { file, skip } = moduleFile(id);
+      if (skip || exclude.test(file) || !include.test(file)) return null;
       compileMdx ??=
         typeof options.mdx === "function"
           ? Promise.resolve(options.mdx)
@@ -269,7 +288,10 @@ export function shadowMdx(options: ShadowMdxOptions = {}): Plugin {
               : { rehypePlugins: options.rehypePlugins }),
             recmaPlugins: [
               ...(options.recmaPlugins ?? []),
-              elementsPlugin(options.elements ?? "overridable"),
+              elementsPlugin(
+                options.elements ?? "overridable",
+                dynamicSourceOf(options.moduleName),
+              ),
             ],
             ...(options.remarkRehypeOptions === undefined
               ? {}

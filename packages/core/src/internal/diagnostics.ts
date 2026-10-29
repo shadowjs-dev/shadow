@@ -17,7 +17,7 @@ import { formatMessage, type MessageCode } from "./messages";
  */
 export class ShadowError extends Error {
   /** The diagnostic code, a key of {@link MESSAGES}; the same in development and production builds. */
-  readonly code: MessageCode;
+  declare readonly code: MessageCode;
   /**
    * Creates the error with the text of {@link formatMessage} for `code` and the name `"ShadowError"`.
    * @param code The diagnostic code.

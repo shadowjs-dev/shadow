@@ -6,6 +6,8 @@ export class Registry {
   private readonly templateDecls: string[] = [];
   readonly delegated: Set<string> = new Set<string>();
   private readonly taken: Set<string>;
+  private readonly memoNames: string[] = [];
+  private memoNext = 1;
   private templateCount = 0;
   private partsCount = 0;
   readonly moduleName: string;
@@ -29,6 +31,29 @@ export class Registry {
     this.taken.add(alias);
     this.imports.set(key, alias);
     return alias;
+  }
+
+  /**
+   * True when the module already uses `name` for something of its own (or this registry gave it
+   * out). Generated locals that live inside a function check it, so they never shadow a name that the
+   * user's expressions inside that function read.
+   */
+  isTaken(name: string): boolean {
+    return this.taken.has(name);
+  }
+
+  /**
+   * The name of the `index`-th memo of a conditional (`_c$`, `_c$2`, ...), skipping names the module already
+   * uses. The names are worked out once, in order, so a long chain of conditionals does not search from the
+   * start for each of its links.
+   */
+  memoName(index: number): string {
+    while (this.memoNames.length <= index) {
+      const name = this.memoNext === 1 ? "_c$" : `_c$${this.memoNext}`;
+      this.memoNext += 1;
+      if (!this.taken.has(name)) this.memoNames.push(name);
+    }
+    return this.memoNames[index] as string;
   }
 
   /** A unique module-level variable name (no import). Stable per base name. */

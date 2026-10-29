@@ -61,6 +61,28 @@ fn markup_name(name: &str, svg: bool) -> String {
     }
 }
 
+/// How the HTML parser reads the content of an element.
+#[derive(Clone, Copy)]
+enum TextKind {
+    /// `script` and `style`: no tags, no entities.
+    Raw,
+    /// `title` and `textarea`: entities only.
+    Escapable,
+}
+
+/// The kind of text-only content an element has. Neither kind can hold a comment, so the markers that
+/// delimit a dynamic child elsewhere would show up as text. SVG parses these names as ordinary elements.
+fn text_kind(element: &ElementIR) -> Option<TextKind> {
+    if element.ns != Namespace::Html {
+        return None;
+    }
+    match element.tag.as_str() {
+        "script" | "style" => Some(TextKind::Raw),
+        "title" | "textarea" => Some(TextKind::Escapable),
+        _ => None,
+    }
+}
+
 /// Collects alternating static strings and runtime holes.
 #[derive(Default)]
 struct Parts {
@@ -170,6 +192,18 @@ impl<'t, 'a> Ctx<'t, 'a> {
 
     fn escaped(&mut self, code: &str) -> String {
         format!("{}({code})", self.reg.helper("escape"))
+    }
+
+    /// A dynamic child of a text-only element: written without markers, as the element's text requires.
+    fn text_hole(&mut self, element: &ElementIR, kind: TextKind, code: &str) -> String {
+        match kind {
+            TextKind::Raw => format!(
+                "{}({}, {code})",
+                self.reg.helper("ssrRawText"),
+                json_string(&element.tag)
+            ),
+            TextKind::Escapable => self.escaped(code),
+        }
     }
 
     /// Runtime props for an element or component that needs `mergeProps`/`ssrElement` semantics.
@@ -378,6 +412,7 @@ impl<'t, 'a> Ctx<'t, 'a> {
 
     fn serialize_children(&mut self, element: &ElementIR, parts: &mut Parts) -> Result<()> {
         let raw = RAW_TEXT_ELEMENTS.contains(&element.tag.as_str());
+        let kind = text_kind(element);
         for child in &element.children {
             match child {
                 ChildIR::Text(value) => {
@@ -399,6 +434,12 @@ impl<'t, 'a> Ctx<'t, 'a> {
                 }
                 ChildIR::Element(inner) => self.serialize_element(inner, parts, false)?,
                 ChildIR::Component(component) => {
+                    if let Some(kind) = kind {
+                        let generated = self.gen_component_ssr(component)?;
+                        let hole = self.text_hole(element, kind, &generated);
+                        parts.hole(hole);
+                        continue;
+                    }
                     parts.text("<!--[-->");
                     let generated = self.gen_component_ssr(component)?;
                     let hole = self.escaped(&generated);
@@ -406,6 +447,11 @@ impl<'t, 'a> Ctx<'t, 'a> {
                     parts.text("<!--]-->");
                 }
                 ChildIR::Slot(expr) => {
+                    if let Some(kind) = kind {
+                        let hole = self.text_hole(element, kind, &expr.text);
+                        parts.hole(hole);
+                        continue;
+                    }
                     parts.text("<!--[-->");
                     let hole = self.escaped(&expr.text);
                     parts.hole(hole);

@@ -2,10 +2,10 @@ import MagicString, { type DecodedSourceMap, SourceMap } from "magic-string";
 import { type AstNode, isJsx, leadingEnd, unwrapParens, walk } from "./ast";
 import { unassignableNames } from "./bindings";
 import { deriveLocals } from "./derive";
-import { CompileError, type Diagnostic } from "./diagnostics";
+import { CompileError, codeFrame, type Diagnostic, makeDiagnostic } from "./diagnostics";
 import { type DomContext, generateDom } from "./dom";
 import { applyHmr, hmrEpilogue, hmrPrelude } from "./hmr";
-import { type LowerContext, lowerJsx } from "./lower";
+import { type LowerContext, lowerJsx, MAX_JSX_DEPTH } from "./lower";
 import { errorInSource, mapInSource, type Origin } from "./origin";
 import { parseModule } from "./parse";
 import type { CompilerPlugin } from "./plugin-types";
@@ -119,7 +119,8 @@ export interface CompileResult {
   transformed: boolean;
 }
 
-const JSX_HINT = /<[A-Za-z_$>]/;
+/** A cheap test before parsing: `<` then what can start a tag name (JSX names are Unicode identifiers) or `>`. */
+const JSX_HINT = /<[\p{ID_Start}_$>]/u;
 
 /** True when the module contains a JSX element or fragment anywhere (the walk stops at the first). */
 function containsJsx(program: AstNode): boolean {
@@ -304,8 +305,44 @@ function runPasses(
   };
   const lowerContext: LowerContext = context;
 
-  const generate = (root: AstNode): string =>
-    (target === "ssr" ? generateSsr : generateDom)(context, lowerJsx(lowerContext, root, "html"));
+  // JSX inside an expression of JSX (`<a x={<b y={<c />} />} />`, `{ok && <b />}`) is generated while its
+  // parent is, so these calls nest on the stack. `lowerJsx` bounds the depth of one tree; this bounds
+  // the trees inside each other, so no input reaches a stack overflow instead of a diagnostic.
+  let nesting = 0;
+  // The generated code of a root, by root. A conditional child is read twice (whole, then its test and
+  // branches for the memoized form), and every read generates the JSX inside it again: without this a
+  // conditional nested n deep costs 2^n. Generating a root twice registers nothing the first time did
+  // not (templates and helpers are deduplicated), so the output is the same. The map lives for one
+  // compile and holds at most one entry per JSX node of the module.
+  const generated = new Map<AstNode, string>();
+  const generate = (root: AstNode): string => {
+    const known = generated.get(root);
+    if (known !== undefined) return known;
+    const code = generateOnce(root);
+    generated.set(root, code);
+    return code;
+  };
+  const generateOnce = (root: AstNode): string => {
+    nesting += 1;
+    try {
+      if (nesting > MAX_JSX_DEPTH) {
+        const diagnostic = makeDiagnostic(
+          source,
+          "JSX_TOO_DEEP",
+          `JSX is nested more than ${MAX_JSX_DEPTH} levels deep inside expressions.`,
+          root.start,
+          root.end,
+        );
+        throw new CompileError(diagnostic, codeFrame(source, root.start), filename);
+      }
+      return (target === "ssr" ? generateSsr : generateDom)(
+        context,
+        lowerJsx(lowerContext, root, "html"),
+      );
+    } finally {
+      nesting -= 1;
+    }
+  };
 
   /**
    * The span of the source that a root replaces, and its text. An element root that is the whole

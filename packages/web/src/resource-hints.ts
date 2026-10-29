@@ -87,7 +87,8 @@ function carries(element: Element, attributes: Attributes): boolean {
 
 /**
  * Inserts a hint element once: an identical element already in the head (server-rendered or added
- * earlier) is kept. On the server the hint joins the render's head collector, when there is one.
+ * earlier) is kept, and a script already anywhere in the document with the same `src` and `type` is
+ * not loaded again. On the server the hint joins the render's head collector, when there is one.
  */
 function hint(
   tag: "link" | "script",
@@ -99,8 +100,16 @@ function hint(
     return;
   }
   if (typeof document === "undefined") return;
-  for (const existing of document.head.querySelectorAll(tag)) {
-    if (carries(existing, attributes)) return;
+  // A script is the same load when its URL and kind match: the page's own bundle usually sits at the end
+  // of the body, and carries `defer` or `async` or neither, so the attributes of the hint are no test.
+  const same =
+    tag === "script"
+      ? (existing: Element): boolean =>
+          existing.getAttribute("src") === attributes["src"] &&
+          (existing.getAttribute("type") ?? "") === (attributes["type"] ?? "")
+      : (existing: Element): boolean => carries(existing, attributes);
+  for (const existing of (tag === "script" ? document : document.head).querySelectorAll(tag)) {
+    if (same(existing)) return;
   }
   const element = document.createElement(tag);
   for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, value);

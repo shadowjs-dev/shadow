@@ -167,6 +167,17 @@ fn is_type_only(declaration: &Declaration<'_>) -> bool {
     )
 }
 
+/// An `enum` or `namespace` that exists at run time (`declare` ones are types only).
+fn is_runtime_namespace(declaration: &Declaration<'_>) -> bool {
+    match declaration {
+        Declaration::TSEnumDeclaration(it) => !it.declare,
+        Declaration::TSExternalModuleDeclaration(it) => !it.declare,
+        Declaration::TSNamespaceDeclaration(it) => !it.declare,
+        Declaration::TSGlobalDeclaration(it) => !it.declare,
+        _ => false,
+    }
+}
+
 /// Variable holding this module's registry, declared by [`hmr_prelude`].
 pub fn hot_reg(registry: &mut Registry) -> String {
     registry.local("_$$reg")
@@ -239,6 +250,10 @@ pub fn apply_hmr(
                     }
                 }
                 if declared.is_empty() && !is_type_only(&export.declaration) {
+                    unknown_export = true;
+                }
+                // An enum or a namespace is a value that importers hold, but it is not a component.
+                if declared.is_empty() && is_runtime_namespace(&export.declaration) {
                     unknown_export = true;
                 }
             }

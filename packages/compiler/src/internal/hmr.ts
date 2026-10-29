@@ -110,6 +110,8 @@ export function applyHmr(
           }
         }
         if (declaredNames.length === 0 && !isTypeOnly(declaration)) unknownExport = true;
+        // An enum or a namespace is a value that importers hold, but it is not a component.
+        if (declaredNames.length === 0 && isRuntimeNamespace(declaration)) unknownExport = true;
       } else {
         for (const specifier of list(statement, "specifiers")) {
           if (str(specifier, "exportKind") === "type") continue;
@@ -180,6 +182,14 @@ function isTypeOnly(declaration: AstNode): boolean {
     declaration.type === "TSTypeAliasDeclaration" ||
     declaration.type === "TSEnumDeclaration" ||
     declaration.type === "TSModuleDeclaration"
+  );
+}
+
+/** An `enum` or `namespace` that exists at run time (`declare` ones are types only). */
+function isRuntimeNamespace(declaration: AstNode): boolean {
+  return (
+    (declaration.type === "TSEnumDeclaration" || declaration.type === "TSModuleDeclaration") &&
+    declaration["declare"] !== true
   );
 }
 

@@ -27,10 +27,11 @@ function markLongestIncreasing(values: readonly number[], offset: number, marks:
       if (probe < value) low = middle + 1;
       else high = middle;
     }
-    previous[index] = low > 0 ? (tails[low - 1] ?? -1) : -1;
+    // `tails[-1]` is undefined, which reads as no predecessor.
+    previous[index] = tails[low - 1] ?? -1;
     tails[low] = index;
   }
-  let cursor = tails.length > 0 ? (tails[tails.length - 1] ?? -1) : -1;
+  let cursor = tails.at(-1) ?? -1;
   while (cursor !== -1) {
     marks[(values[cursor] ?? 0) - offset] = 1;
     cursor = previous[cursor] ?? -1;
@@ -115,11 +116,11 @@ export function reconcileNodes(
     else survivors.push(position);
   }
 
+  // Nothing survived: the new nodes go in document order. Inserting them back to front (the move loop below)
+  // ends with the same tree but not the same steps, and a `<select>` picks its shown option while its options
+  // arrive, so a replaced option list would show the wrong value.
   if (survivors.length === 0) {
-    for (let index = head; index < nextTail; index += 1) {
-      const node = next[index];
-      if (node !== undefined) parent.insertBefore(node, before);
-    }
+    for (const node of next.slice(head, nextTail)) parent.insertBefore(node, before);
     return;
   }
 

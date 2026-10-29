@@ -15,7 +15,8 @@ import { untrack } from "./ownership";
 export interface SignalOptions<T> {
   /**
    * Decides whether a write is a change: readers are notified only when it returns `false`.
-   * `false` notifies on every write, even of the same value.
+   * `false` notifies on every write, even of the same value. It runs untracked: a signal it reads
+   * is not a dependency of the computation that writes.
    * @default Object.is
    */
   equals?: Equals<T>;
@@ -23,7 +24,7 @@ export interface SignalOptions<T> {
    * Label shown by devtools and diagnostics.
    * @default undefined (the signal is unnamed)
    */
-  name?: string;
+  name?: string | undefined;
 }
 
 /**

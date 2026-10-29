@@ -5,8 +5,9 @@ import { classText, ssrStyle, styleText } from "./class-style";
 import { invalid } from "./errors";
 // biome-ignore lint/suspicious/noShadowRestrictedNames: the name "escape" is part of the compiler contract (SSR output).
 import { escape, escapeHtml, resolveValue } from "./escape";
-import { markSelectedOptions, textareaContent } from "./form-controls";
+import { keepLeadingNewline, markSelectedOptions, textareaContent } from "./form-controls";
 import { isSsrNode, SsrNode } from "./node";
+import { rawElementContent } from "./raw-text";
 
 /** A tag name: letters, digits and dashes, starting with a letter. Anything else could break out. */
 const TAG_NAME = /^[A-Za-z][A-Za-z0-9-]*$/;
@@ -215,7 +216,10 @@ export function ssrElement(
           attributes += ssrAttribute(name, value, name === "checked");
       } else {
         const name = attributeName(key, svg);
-        attributes += ssrAttribute(name, value, BOOLEAN_ATTRIBUTES.has(name));
+        // `hidden="until-found"` is a keyword, not a flag: a bare `hidden` would hide what it should only collapse.
+        const flag =
+          BOOLEAN_ATTRIBUTES.has(name) && !(name === "hidden" && value === "until-found");
+        attributes += ssrAttribute(name, value, flag);
       }
     }
   }
@@ -223,13 +227,17 @@ export function ssrElement(
   if (style !== "") attributes += ssrStyle(style);
   if (VOID_ELEMENTS.has(lowerTag)) return new SsrNode(`<${tag}${attributes}>`);
   // Like the DOM `spread`: a `children` prop supplies the content unless the element wrote its own.
+  // The text of a script or a style is raw (no entities), so it is written as it is and checked instead.
+  const raw = !svg && (lowerTag === "script" || lowerTag === "style");
+  const given = children === undefined ? propsChildren(props) : children;
   let content =
-    innerHtml !== undefined
-      ? innerHtml
-      : escape(children === undefined ? propsChildren(props) : children);
+    innerHtml !== undefined ? innerHtml : raw ? rawElementContent(lowerTag, given) : escape(given);
   if (innerHtml === undefined && (hasValue || hasFallback)) {
     const value = hasValue ? control.value : control.fallback;
     content = isTextarea ? textareaContent(value) : markSelectedOptions(value, content);
+  } else if (isTextarea && innerHtml === undefined) {
+    // The children of a textarea are its value (as on the client): keep a first line break the parser drops.
+    content = keepLeadingNewline(content);
   }
   return new SsrNode(`<${tag}${attributes}>${content}</${tag}>`);
 }

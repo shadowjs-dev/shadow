@@ -140,6 +140,13 @@ reads that text, so the `Origin` of each rewrite (`origin.ts`) traces its offset
 - `lower.ts` is the only place that decides what is static text. Literal children are folded there (never in
   `dom.ts` or `ssr.ts`), so both targets lay out the same text nodes and hydration matches. Parents where HTML
   parsing differs from inserting (`NO_TEXT_FOLD`) and component children are never folded.
+- The text-only elements of HTML (`script`, `style`, `title`, `textarea`) hold text and no comment, so the server writes their
+  dynamic children without the `<!--[-->` markers other elements get: `ssrRawText` for `script` and `style` (raw text, with a closing
+  tag made harmless as `<\/style`), `escape` for `title`. `lower.ts` joins the text and slots of `script`, `style` and `title` into
+  one slot, so the browser output has one region for the client to adopt. SVG's `style` and `title` are ordinary elements.
+- `value` wins over `defaultValue` (and `checked` over `defaultChecked`) on an element: one write, in `lower.ts`, for both targets.
+  A static attribute value the template parser would change (CR, NUL, other controls) is set at run time, as a literal child with
+  such text is an insert; a script URL is checked under its HTML and its React name (`xlinkHref`).
 - `classify.ts` is the only authority on "dynamic" and on constant values (`constantValue`). Folding in
   attributes and in children uses the same function.
 - `DomContext.blocks` maps the text of an element root's wrapping function to its statements. A site that is a
@@ -192,6 +199,12 @@ source ─▶ parse (oxc) ─▶ useStore cells ─▶ derived constants ─▶ 
   concurrent calls are safe, also from worker threads.
 - [COMPILER-14] No input makes the compiler crash or fail internally: deep nesting is compiled on a thread
   with a large stack or refused with an error, and a panic is caught at the boundary and handed to the reference.
+  JSX nested through expressions is refused with `JSX_TOO_DEEP` past 400 levels by every implementation, and more than 150,000
+  nested brackets is refused with `PARSE_ERROR`. The WebAssembly build runs on the stack of the JavaScript engine (about 1 MiB), where
+  deep input traps; the loader then runs the same module on a worker thread with a 1 GiB stack (`src/native/wasm-stack.ts`; the
+  module's own stack in linear memory is 512 MiB), so the limits are the addon's, the output is the same and nothing is handed to the
+  reference. The worker does not keep the process alive. Each JSX root is generated once
+  (`Ctx::generate` remembers it), so a conditional nested n deep costs n, not 2^n, and a chain of conditionals is followed with a loop.
 - [COMPILER-15] The package and its platform packages (`@shadow-js/compiler-<platform>`) carry one version.
 - Offsets inside the Rust code are UTF-8 byte offsets; they become UTF-16 code unit offsets only where a position is
   reported (diagnostics) or counted (source map columns).
@@ -204,7 +217,9 @@ source ─▶ parse (oxc) ─▶ useStore cells ─▶ derived constants ─▶ 
 - Graph: push-dirty / pull-clean. States CLEAN < CHECK < DIRTY. Memos recompute lazily on read;
   effects are queued and drained by `flush()` (render effects first, then user effects, parents
   before children, siblings by creation).
-- Source files: `internal/` is not exported. `state.ts` holds the only mutable registers.
+- Source files: `internal/` is not exported. `state.ts` holds the only mutable registers, plus one documented exception: `props.ts` keeps `readDepth` and
+  `readStates` (scratch for one outermost live props read, reset in `finally`) because it may import only the
+  public extension API.
 - Diagnostics: add a code to `internal/messages.ts`, throw `ShadowError(code)` or call `warn(code)`.
 - Exported signatures are the public API. Changing one is a breaking change.
 

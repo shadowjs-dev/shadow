@@ -111,7 +111,7 @@ export function useDeferredValue<T>(
   registerTransitionLane();
   const [value, setValue] = useSignal<T>(untrack(source), {
     equals: options?.equals ?? Object.is,
-    ...(options?.name === undefined ? {} : { name: options.name }),
+    name: options?.name,
   });
   // The watcher runs in the lane. Its first run (queued at creation) finds the value equal, so it
   // writes nothing; a later run writes the source's value, and an equal value notifies nobody.

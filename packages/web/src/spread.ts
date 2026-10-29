@@ -1,12 +1,12 @@
 import { onCleanup, untrack, useRenderEffect } from "@shadow-js/core";
 import { setAttribute, setAttributeNS, setBoolAttribute } from "./attributes";
 import { autoFocus } from "./autofocus";
-import { applyClass, classList, style } from "./class-style";
+import { applyClass, asRecord, classList, style } from "./class-style";
 import { bindEvent } from "./events";
 import { bindRegion, createRegion } from "./insert";
 import { claims } from "./internal/hydration-hooks";
 import { attributeName, eventPlan, IGNORED_KEYS } from "./internal/react-names";
-import { selectShows, setSelectValue } from "./select-value";
+import { plainText, setSelectValue } from "./select-value";
 
 /** The namespace of `xlink:` attributes (SVG's legacy links). */
 const XLINK_NS = "http://www.w3.org/1999/xlink";
@@ -41,17 +41,6 @@ function isEventKey(key: string): boolean {
 function nameOf(key: string): string {
   const colon = key.indexOf(":");
   return colon === -1 ? key : key.slice(colon + 1);
-}
-
-/** Narrows an object value to a record of keys; arrays and primitives are not class maps. */
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
-  return value as Record<string, unknown>;
-}
-
-/** Text for innerHTML and textContent: null and undefined become the empty string. */
-function plainText(value: unknown): string {
-  return value === null || value === undefined ? "" : String(value);
 }
 
 /** Reads every prop except children, inside the render effect so each read is tracked. */
@@ -133,12 +122,8 @@ function applyKey(
     if (unbind !== undefined) state.unbinders.set(key, unbind);
     return;
   }
-  if (key === "innerHTML") {
-    el.innerHTML = plainText(value);
-    return;
-  }
-  if (key === "dangerouslySetInnerHTML") {
-    el.innerHTML = innerHtmlValue(value);
+  if (key === "innerHTML" || key === "dangerouslySetInnerHTML") {
+    el.innerHTML = key === "innerHTML" ? plainText(value) : innerHtmlValue(value);
     return;
   }
   if (key === "textContent") {
@@ -168,7 +153,7 @@ function applyKey(
 /**
  * Writes one prop by its key: a `prop:` property, an `attr:` or `bool:` attribute, or an attribute
  * under its React name. An `undefined` value removes the attribute or resets the property, which is how
- * {@link clearKey} undoes a prop.
+ * a prop that disappeared is undone.
  */
 function writeKey(el: Element, key: string, value: unknown, svg: boolean): void {
   if (key.startsWith("prop:")) {
@@ -203,45 +188,10 @@ const STRING_PROPERTIES: ReadonlySet<string> = new Set(["value", "defaultValue"]
  */
 function liveDiffers(el: Element, key: string, value: unknown, svg: boolean): boolean {
   if (svg || !LIVE_PROPERTIES.has(key) || !(key in el)) return false;
-  if (key === "value" && el instanceof HTMLSelectElement) return !selectShows(el, value);
+  // A select is written again whenever its props run: setting the value it already shows changes nothing.
+  if (key === "value" && el instanceof HTMLSelectElement) return true;
   const live = Reflect.get(el, key);
   return STRING_PROPERTIES.has(key) ? live !== plainText(value) : live !== Boolean(value);
-}
-
-/** Undoes a prop that disappeared from the props object. */
-function clearKey(el: Element, key: string, state: SpreadState, svg: boolean): void {
-  if (key === "ref") {
-    runRefCleanup(state);
-    return;
-  }
-  // A focus request is not a state: removing the prop does not unfocus the element.
-  if (key === "autoFocus") return;
-  if (key === "class" || key === "className") {
-    applyClass(el, undefined, svg);
-    return;
-  }
-  if (key === "style") {
-    state.styleValue = style(el as HTMLElement | SVGElement, undefined, state.styleValue);
-    return;
-  }
-  if (key === "classList") {
-    state.classListValue = classList(el, undefined, state.classListValue);
-    return;
-  }
-  if (isEventKey(key)) {
-    state.unbinders.get(key)?.();
-    state.unbinders.delete(key);
-    return;
-  }
-  if (key === "innerHTML" || key === "dangerouslySetInnerHTML" || key === "textContent") {
-    el.textContent = "";
-    return;
-  }
-  if (!svg && LIVE_PROPERTIES.has(key) && key in el) {
-    Reflect.set(el, key, STRING_PROPERTIES.has(key) ? "" : false);
-    return;
-  }
-  writeKey(el, key, undefined, svg);
 }
 
 /**
@@ -269,7 +219,9 @@ function applyEntries(
   for (const key of [...state.values.keys()]) {
     if (current.has(key)) continue;
     state.values.delete(key);
-    clearKey(el, key, state, svg);
+    // A prop that disappeared is applied as `undefined`: every branch of applyKey then undoes it (a ref cleanup
+    // runs, a handler is unbound, the class, style and attribute go, a live property returns to empty).
+    applyKey(el, key, undefined, state, svg);
   }
 }
 

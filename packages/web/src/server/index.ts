@@ -19,6 +19,7 @@ export {
   type HydrationScriptOptions,
 } from "./hydration-script";
 export { createServerPortals, type ServerPortals } from "./portals";
+export { ssrRawText } from "./raw-text";
 export type { AsyncRenderOptions, AsyncRenderResult, RenderOptions } from "./render";
 export { renderToString, renderToStringAsync } from "./render";
 export { deserialize, serialize } from "./serialize";

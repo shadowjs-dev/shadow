@@ -23,3 +23,10 @@ export class SsrError extends Error {
 export function invalid(code: string, detail: string): TypeError {
   return new TypeError(__DEV__ ? `[shadow ${code}] ${detail}` : `SHADOW_${code}`);
 }
+
+/**
+ * The longest delay `setTimeout` honors: larger values fire after one millisecond. A budget above it
+ * (`Number.MAX_SAFE_INTEGER` for "no limit") is clamped here instead of ending every render at once.
+ * @internal
+ */
+export const MAX_TIMER_MS = 2_147_483_647;

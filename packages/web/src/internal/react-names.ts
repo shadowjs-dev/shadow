@@ -11,24 +11,18 @@
  * `stroke-width`). A camelCase name whose first word is one of these families is hyphenated. The
  * families are the first words of the CSS properties SVG takes as attributes, so one rule covers the
  * presentation list. The compiler's table (`packages/compiler/src/internal/react-names.ts`) lists the
- * same names, and a test checks each one.
+ * same names, and a test checks each one. The exceptions are SVG attributes that start with a family but are
+ * not CSS properties (`clipPathUnits`, `markerWidth`): they are camelCase in SVG, so they keep their case.
  */
 const SVG_PROPERTY_FAMILY =
-  /^(?:alignment|baseline|clip|color|dominant|enable|fill|flood|font|glyph|image|letter|lighting|marker|mask|mix|paint|pointer|shape|stop|stroke|text|transform|unicode|vector|white|word|writing)(?=[A-Z])/;
+  /^(?!clipPathUnits|glyphRef|marker(?:Height|Units|Width)|mask(?:Content)?Units|textLength)(?:alignment|baseline|clip|color|dominant|enable|fill|flood|font|glyph|image|letter|lighting|marker|mask|mix|paint|pointer|shape|stop|stroke|text|transform|unicode|vector|white|word|writing)(?=[A-Z])/;
 
-/**
- * SVG attributes that start with a property family but are not CSS properties (`clipPathUnits`,
- * `markerWidth`): they are camelCase in SVG, so they keep their case.
- */
-const SVG_CAMEL_ATTRIBUTES: ReadonlySet<string> = new Set([
-  "clipPathUnits",
-  "glyphRef",
-  "markerHeight",
-  "markerUnits",
-  "markerWidth",
-  "maskContentUnits",
-  "maskUnits",
-  "textLength",
+/** React names whose attribute differs from the lower-cased key, in HTML and SVG alike. */
+const RENAMED: ReadonlyMap<string, string> = new Map([
+  ["className", "class"],
+  ["htmlFor", "for"],
+  ["httpEquiv", "http-equiv"],
+  ["acceptCharset", "accept-charset"],
 ]);
 
 /**
@@ -38,22 +32,14 @@ const SVG_CAMEL_ATTRIBUTES: ReadonlySet<string> = new Set([
  * @internal
  */
 export function attributeName(name: string, svg: boolean): string {
-  if (name === "className") return "class";
-  if (name === "htmlFor") return "for";
-  if (name === "httpEquiv") return "http-equiv";
-  if (name === "acceptCharset") return "accept-charset";
+  const renamed = RENAMED.get(name);
+  if (renamed !== undefined) return renamed;
   if (!svg) return name.toLowerCase();
   if (name.includes(":")) return name;
-  const xlink = /^xlink([A-Z].*)$/.exec(name);
-  if (xlink !== null) return `xlink:${lowerFirst(xlink[1] ?? "")}`;
-  const xml = /^xml([A-Z].*)$/.exec(name);
-  if (xml !== null) return `xml:${lowerFirst(xml[1] ?? "")}`;
-  if (SVG_CAMEL_ATTRIBUTES.has(name) || !SVG_PROPERTY_FAMILY.test(name)) return name;
+  const prefixed = /^(xlink|xml)([A-Z])(.*)$/.exec(name);
+  if (prefixed !== null) return `${prefixed[1]}:${prefixed[2]?.toLowerCase()}${prefixed[3]}`;
+  if (!SVG_PROPERTY_FAMILY.test(name)) return name;
   return name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
-}
-
-function lowerFirst(text: string): string {
-  return text.replace(/^[A-Z]/, (letter) => letter.toLowerCase());
 }
 
 /** Props that have no DOM form: a spread ignores them (React's `key` and hydration flags). @internal */
@@ -70,6 +56,13 @@ export interface EventPlan {
   readonly passive: boolean;
 }
 
+/** React events that bubble under another name. */
+const REACT_EVENTS: ReadonlyMap<string, string> = new Map([
+  ["focus", "focusin"],
+  ["blur", "focusout"],
+  ["doubleclick", "dblclick"],
+]);
+
 const CHANGE_ON_TYPES: ReadonlySet<string> = new Set(["checkbox", "radio", "file"]);
 
 /**
@@ -82,17 +75,15 @@ const CHANGE_ON_TYPES: ReadonlySet<string> = new Set(["checkbox", "radio", "file
 export function eventPlan(attribute: string, tag: string, type: string | null): EventPlan {
   const reactSpelling = /^on[A-Z]/.test(attribute);
   const capture = reactSpelling && attribute.endsWith("Capture");
-  const base = attribute.slice(2, capture ? -"Capture".length : undefined);
-  if (!reactSpelling) return { type: base.toLowerCase(), capture: false, passive: false };
-  const lower = base.toLowerCase();
-  if (lower === "change") {
-    const perEdit =
-      tag === "textarea" || (tag === "input" && (type === null || !CHANGE_ON_TYPES.has(type)));
-    return { type: perEdit ? "input" : "change", capture, passive: false };
+  const lower = attribute.slice(2, capture ? -"Capture".length : undefined).toLowerCase();
+  let planned = lower;
+  if (reactSpelling) {
+    planned =
+      lower === "change"
+        ? tag === "textarea" || (tag === "input" && (type === null || !CHANGE_ON_TYPES.has(type)))
+          ? "input"
+          : "change"
+        : (REACT_EVENTS.get(lower) ?? lower);
   }
-  if (lower === "focus") return { type: "focusin", capture, passive: false };
-  if (lower === "blur") return { type: "focusout", capture, passive: false };
-  if (lower === "doubleclick") return { type: "dblclick", capture, passive: false };
-  if (lower === "wheel") return { type: "wheel", capture, passive: !capture };
-  return { type: lower, capture, passive: false };
+  return { type: planned, capture, passive: reactSpelling && lower === "wheel" && !capture };
 }

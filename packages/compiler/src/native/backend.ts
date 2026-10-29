@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { platformKey, requireNode } from "./platform";
+import { createBigStack } from "./wasm-stack";
 
 /**
  * What a backend returns for one module: the fields of the Rust `NativeOutput`. `kind` 0 is code,
@@ -198,12 +199,18 @@ export function loadWasm(): Attempt {
         : join(packageRoot(), "wasm", "shadow-compiler.wasm");
     const module = new WebAssembly.Module(readFileSync(file));
     let exports = new WebAssembly.Instance(module, {}).exports as unknown as WasmExports;
+    const bigStack = createBigStack(module);
     const run = (source: string, options: RawOptions): RawOutput => {
       try {
         return runWasm(exports, source, options);
       } catch (error) {
         // A trap leaves the instance in an unknown state: start from a fresh one.
         exports = new WebAssembly.Instance(module, {}).exports as unknown as WasmExports;
+        // Input nested deeper than the stack of this thread holds overflows it (the engine raises a RangeError, or the shadow stack
+        // in the module's memory is exhausted): the same module answers on a thread with a stack as large as the addon's.
+        if (error instanceof RangeError || error instanceof WebAssembly.RuntimeError) {
+          return bigStack.run(source, options);
+        }
         throw error;
       }
     };

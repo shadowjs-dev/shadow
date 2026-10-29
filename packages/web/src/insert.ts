@@ -1,9 +1,11 @@
 import { useRenderEffect } from "@shadow-js/core";
 import {
+  addCleanup,
   type ComputationNode,
   createComputation,
   currentOwner,
   disposeOwner,
+  type Owner,
   readComputation,
 } from "@shadow-js/core/extend";
 import { checkClaimedText } from "./internal/claim";
@@ -19,13 +21,18 @@ const MAX_ACCESSOR_DEPTH = 10_000;
 /**
  * State of one dynamic child region. `nodes` are the DOM nodes the region owns, in order. When
  * `anchor` is set, content goes before it. Without one, an empty region is placed after `marker`
- * (the node that preceded it), so it keeps its position while it is empty.
+ * (the node that preceded it), so it keeps its position while it is empty. A marker can be a node
+ * another region owns and later replaces, so the region created right behind another one on the same parent
+ * gives that one an anchor of its own (see `linkRegion`): the marker of every region is then either static
+ * content or an anchor nobody replaces.
  * @internal
  */
 export interface Region {
   readonly parent: Node;
-  readonly anchor: Node | null;
+  anchor: Node | null;
   marker: Node | null;
+  /** The owner of the effect that keeps a reactive region up to date; unset until then (and for a static region). */
+  owner?: Owner | null;
   nodes: Node[];
   /**
    * Text nodes this region created or adopted; only these may be reused by string updates. Null for none, the node
@@ -38,6 +45,9 @@ export interface Region {
    */
   claimed?: readonly Node[] | undefined;
 }
+
+/** The newest reactive unanchored region of each parent: the one the next such region may have to give an anchor. */
+const tails = new WeakMap<Node, Region>();
 
 /** The document a node belongs to (a Document is its own document). */
 function documentOf(node: Node): Document {
@@ -99,9 +109,7 @@ function flatten(root: unknown, call: (fn: () => unknown) => unknown = (fn) => f
       item = call(item as () => unknown);
     }
     if (item === null || item === undefined || typeof item === "boolean") continue;
-    if (typeof item === "string") parts.push(item);
-    else if (typeof item === "number") parts.push(String(item));
-    else if (item instanceof DocumentFragment) {
+    if (item instanceof DocumentFragment) {
       for (const child of item.childNodes) parts.push(child);
     } else if (item instanceof Node) parts.push(item);
     else if (Array.isArray(item)) {
@@ -110,7 +118,7 @@ function flatten(root: unknown, call: (fn: () => unknown) => unknown = (fn) => f
       active.add(item);
       frames.push(item);
       cursors.push(0);
-    } else parts.push(String(item));
+    } else parts.push(String(item)); // strings, numbers and anything else that is text
   }
   return parts;
 }
@@ -164,10 +172,9 @@ function materialize(region: Region, parts: readonly Part[]): Node[] {
   return nodes;
 }
 
-/** The node after the region: its anchor, or the node after its last attached child, or its marker. */
-function endOf(region: Region, attached: readonly Node[]): Node | null {
+/** The node after the region: its anchor, or the node after its last attached child (`last`), or its marker. */
+function endOf(region: Region, last: Node | undefined): Node | null {
   if (region.anchor !== null) return region.anchor;
-  const last = attached.at(-1);
   if (last !== undefined) return last.nextSibling;
   const marker = region.marker;
   if (marker === null) return region.parent.firstChild;
@@ -179,7 +186,7 @@ function endOf(region: Region, attached: readonly Node[]): Node | null {
 function reconcileRegion(region: Region, next: Node[]): void {
   const parent = region.parent;
   const attached = region.nodes.filter((node) => node.parentNode === parent);
-  const end = endOf(region, attached);
+  const end = endOf(region, attached.at(-1));
   const first = attached[0];
   if (next.length === 0 && first !== undefined) region.marker = first.previousSibling;
   reconcileNodes(parent, attached, next, end);
@@ -219,7 +226,7 @@ function commitValue(region: Region, raw: unknown): void {
     } else if (nodes.length === 0) {
       const created = documentOf(region.parent).createTextNode(text);
       addText(region, created);
-      region.parent.insertBefore(created, endOf(region, nodes));
+      region.parent.insertBefore(created, endOf(region, undefined));
       region.nodes = [created];
       return;
     }
@@ -247,11 +254,40 @@ function adoptInitial(parent: Node, initial: unknown): Node[] {
 export function createRegion(parent: Node, anchorNode: Node | null, initial: unknown): Region {
   const nodes = initial === undefined ? [] : adoptInitial(parent, initial);
   const marker = nodes.length > 0 ? (nodes[0]?.previousSibling ?? null) : parent.lastChild;
-  const region: Region = { parent, anchor: anchorNode, marker, nodes, texts: null };
+  const region: Region = {
+    parent,
+    anchor: anchorNode,
+    marker,
+    nodes,
+    texts: null,
+  };
   for (const node of nodes) if (node instanceof Text) addText(region, node);
   // A region that adopts server nodes during a hydration pass is checked against its first commit.
   if (__DEV__ && initial !== undefined && claims.current.isClaiming()) region.claimed = nodes;
   return region;
+}
+
+/**
+ * Called for a region that keeps changing and has no anchor. When the previous such region of the parent is alive
+ * and ends exactly where this one starts, that region gets an empty Text node there as its anchor. Its content then
+ * always goes before that node, and this region's marker is the node, so no region has a marker that a sibling
+ * region can replace: the order of the calls holds however the regions change. A region with static content
+ * between it and this one needs nothing, because its marker and its end are the static nodes.
+ */
+function linkRegion(region: Region): void {
+  const parent = region.parent;
+  const tail = tails.get(parent);
+  region.owner = currentOwner();
+  tails.set(parent, region);
+  const start = region.nodes[0] ?? null;
+  if (tail === undefined || tail.owner?.disposed || endOf(tail, tail.nodes.at(-1)) !== start)
+    return;
+  const text = anchor(parent, start);
+  tail.anchor = region.marker = text;
+  // The anchor is the tail's alone and goes with it, so a region replaced by another one over and over adds
+  // nothing to the parent. The region behind it, if empty, is then placed at the end like any region whose marker
+  // is gone.
+  if (tail.owner) addCleanup(tail.owner, () => text.remove());
 }
 
 /**
@@ -316,15 +352,17 @@ function createCallCache(owner: ReturnType<typeof currentOwner>): {
 /**
  * Keeps a region in sync with `value`. A value that is or contains a function (an accessor, or an
  * array with accessor members) runs inside a render effect, so its reads are tracked. Anything
- * else is inserted once.
+ * else is inserted once. `ordered` is for `insert()` without an anchor: a region that keeps changing then keeps
+ * its place among the other such regions of its parent (see `linkRegion`).
  * @internal
  */
-export function bindRegion(region: Region, value: unknown): unknown {
+export function bindRegion(region: Region, value: unknown, ordered?: boolean): unknown {
   if (!containsFunction(value)) {
     commitValue(region, value);
     return value instanceof DocumentFragment ? [...region.nodes] : value;
   }
   let latest: unknown;
+  if (ordered === true) linkRegion(region);
   const accessor = typeof value === "function" ? (value as () => unknown) : () => value;
   // Every accessor met while resolving the result is evaluated by a memo of its own, kept between
   // runs. An accessor that builds components (`() => show() ? <Late /> : null`) then runs again
@@ -399,7 +437,10 @@ export function anchor(parent: Node, before: Node | null): Text {
  * - `null`, `undefined`, booleans render nothing. Strings and numbers become one Text node, reused
  *   when the region already holds one. A Node is inserted itself. A DocumentFragment inserts a
  *   snapshot of its children. Arrays are flattened, nested arrays included.
- * - Content goes before `anchorNode`, or at the end when it is null or omitted.
+ * - Content goes before `anchorNode`, or at the end when it is null or omitted. Regions without an
+ *   anchor on one parent keep the order of the calls, whatever they show and however often a sibling
+ *   region replaces its nodes: when a reactive region is created right where the previous one ends, the
+ *   previous one gets an empty Text node as its anchor there (removed again when that region is disposed).
  * - Arrays are reconciled in place: nodes that remain are never removed and re-added.
  * - `initial` lists nodes already in the DOM (from hydration or splitText) so nothing is recreated.
  * - During `hydrate()`, a region that adopted server text is compared with its first commit: in
@@ -437,5 +478,5 @@ export function insert(
   const adopted =
     initial === undefined ? claims.current.takeRegion(parent, resolvedAnchor) : initial;
   const region = createRegion(parent, resolvedAnchor, adopted);
-  return bindRegion(region, value);
+  return bindRegion(region, value, resolvedAnchor === null);
 }

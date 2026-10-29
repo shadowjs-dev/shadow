@@ -26,17 +26,6 @@ export interface DeferredEffectOptions extends EffectOptions {
   defer?: boolean;
 }
 
-/** What a held effect computes while its gate is closed: nothing for `apply` to act on. */
-const HELD: unique symbol = Symbol("held");
-
-/** The nearest gate above the current owner (see `Owner.gate`), or null. */
-function nearestGate(): (() => boolean) | null {
-  for (let owner = currentOwner(); owner !== null; owner = owner.parent) {
-    if (owner.gate !== null) return owner.gate;
-  }
-  return null;
-}
-
 function createEffect(
   fnIn: (previous: never) => unknown,
   applyIn: ((value: never, previous: never) => unknown) | null,
@@ -46,38 +35,33 @@ function createEffect(
 ): void {
   // Effects never run on the server (G-24): no node, no ownership slot, no cost.
   if (__SERVER__) return;
-  if (currentOwner() === null) warn("NO_OWNER_EFFECT");
+  if (__DEV__ && currentOwner() === null) warn("NO_OWNER_EFFECT");
   let fn = fnIn;
   let apply = applyIn;
   let defer = deferIn;
-  const gate = render ? null : nearestGate();
+  const gate = render ? null : (currentOwner()?.gate ?? null);
   if (gate !== null) {
     // Held until the gate first opens (a Suspense boundary resolving). The gate is only read until
-    // then, so later changes of it never re-run the effect.
+    // then, so later changes of it never re-run the effect. `closed` is what the latest run of `fn`
+    // found: `apply` runs right after it, and does nothing for a run that was held.
     let opened = false;
-    const held = (): boolean => {
-      if (opened) return false;
-      if (gate()) return true;
-      opened = true;
-      return false;
+    let closed = false;
+    const innerFn = fn;
+    const innerApply = apply;
+    // `defer` skips the first real run, not the held one, so it is handled here.
+    let skipFirst = defer;
+    defer = false;
+    fn = (previous) => {
+      closed = !opened && gate();
+      opened ||= !closed;
+      return closed ? undefined : innerFn(previous);
     };
-    if (apply === null) {
-      const inner = fn;
-      fn = (previous) => (held() ? undefined : inner(previous));
-    } else {
-      const innerFn = fn;
-      const innerApply = apply;
-      // `defer` skips the first real run, not the held one, so it is handled here.
-      let skipFirst = defer;
-      defer = false;
-      fn = (previous) => (held() ? HELD : innerFn(previous));
+    if (innerApply !== null) {
       apply = (value, previous) => {
-        if ((value as unknown) === HELD) return undefined;
-        if (skipFirst) {
-          skipFirst = false;
-          return undefined;
-        }
-        return innerApply(value, ((previous as unknown) === HELD ? undefined : previous) as never);
+        if (closed) return undefined;
+        if (!skipFirst) return innerApply(value, previous);
+        skipFirst = false;
+        return undefined;
       };
     }
   }
@@ -86,8 +70,8 @@ function createEffect(
     fn,
     render,
     defer,
-    ...(apply === null ? {} : { apply }),
-    ...(name === undefined ? {} : { name }),
+    apply: apply ?? undefined,
+    name,
   });
 }
 

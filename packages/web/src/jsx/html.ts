@@ -236,6 +236,7 @@ export interface IFrameAttributes {
   referrerpolicy?: Maybe<ReferrerPolicy>;
   sandbox?: Maybe<string>;
   src?: Maybe<string>;
+  /** An HTML document the frame runs: an HTML sink with the trust of `innerHTML`. Sanitize it and set `sandbox`. */
   srcdoc?: Maybe<string>;
   width?: Maybe<number | string>;
 }

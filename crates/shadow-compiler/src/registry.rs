@@ -24,6 +24,10 @@ pub struct Registry {
     /// Events whose handlers are attached once per document.
     pub delegated: BTreeSet<String>,
     taken: FxHashSet<String>,
+    /// The names given to the memos of conditionals so far, in order (`_c$`, `_c$2`, ...).
+    memo_names: Vec<String>,
+    /// The next number to try as a memo name.
+    memo_next: usize,
     template_count: usize,
     parts_count: usize,
     /// The module the runtime helpers are imported from.
@@ -44,6 +48,8 @@ impl Registry {
             template_decls: Vec::new(),
             delegated: BTreeSet::new(),
             taken,
+            memo_names: Vec::new(),
+            memo_next: 1,
             template_count: 0,
             parts_count: 0,
             module_name,
@@ -87,6 +93,32 @@ impl Registry {
         self.imports
             .push((from.map(str::to_string), name, Rc::clone(&alias)));
         alias
+    }
+
+    /// True when the module already uses `name` for something of its own (or this registry gave it
+    /// out). Generated locals that live inside a function check it, so they never shadow a name that
+    /// the user's expressions inside that function read.
+    #[must_use]
+    pub fn is_taken(&self, name: &str) -> bool {
+        self.taken.contains(name)
+    }
+
+    /// The name of the `index`-th memo of a conditional (`_c$`, `_c$2`, ...), skipping names the module
+    /// already uses. The names are worked out once, in order, so a long chain of conditionals does not
+    /// search from the start for each of its links.
+    pub fn memo_name(&mut self, index: usize) -> &str {
+        while self.memo_names.len() <= index {
+            let name = if self.memo_next == 1 {
+                "_c$".to_string()
+            } else {
+                format!("_c${}", self.memo_next)
+            };
+            self.memo_next += 1;
+            if !self.taken.contains(&name) {
+                self.memo_names.push(name);
+            }
+        }
+        self.memo_names.get(index).map_or("", String::as_str)
     }
 
     /// A unique module-level variable name (no import), stable per base name.

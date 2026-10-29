@@ -77,16 +77,23 @@ export function useExternalStore<T>(
       : getSnapshot;
   const [value, setValue] = useSignal<T>(untrack(first), {
     equals: options?.equals ?? Object.is,
-    ...(options?.name === undefined ? {} : { name: options.name }),
+    name: options?.name,
   });
   const sync = (): void => {
     const next = untrack(getSnapshot);
     setValue(() => next);
   };
   useEffect(() => {
-    const unsubscribe = subscribe(sync);
-    // Catch up with changes made between the first read and the subscription.
-    sync();
+    // `subscribe` is a user callback: what it reads must not re-run (and re-subscribe) this effect.
+    const unsubscribe = untrack(() => subscribe(sync));
+    try {
+      // Catch up with changes made between the first read and the subscription.
+      sync();
+    } catch (error) {
+      // The effect fails, so no cleanup is registered: release the subscription here.
+      unsubscribe();
+      throw error;
+    }
     return unsubscribe;
   });
   return value;

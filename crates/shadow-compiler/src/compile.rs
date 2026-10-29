@@ -4,6 +4,7 @@ use crate::fxhash::FxHashSet;
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::Program;
+use oxc_syntax::identifier::is_identifier_start;
 
 use crate::ctx::{Ctx, CtxSettings, RootSite};
 use crate::derive::derive_locals;
@@ -94,19 +95,18 @@ pub enum CompileFailure {
     Unsupported(String),
 }
 
-const JSX_HINT_FIRST: &[u8] = b"<";
-
-/// True when the text may hold JSX: a `<` followed by a letter, `_`, `$` or `>` (`/<[A-Za-z_$>]/`).
+/// True when the text may hold JSX: a `<` followed by what can start a tag name (JSX names are Unicode
+/// identifiers: a letter, `_`, `$`) or `>` (`/<[\p{ID_Start}_$>]/u`).
 fn has_jsx_hint(text: &str) -> bool {
     let bytes = text.as_bytes();
     let mut index = 0;
     while let Some(found) = bytes
         .get(index..)
-        .and_then(|rest| rest.iter().position(|&b| b == JSX_HINT_FIRST[0]))
+        .and_then(|rest| rest.iter().position(|&b| b == b'<'))
     {
         let at = index + found;
-        if let Some(&next) = bytes.get(at + 1)
-            && (next.is_ascii_alphabetic() || next == b'_' || next == b'$' || next == b'>')
+        if let Some(next) = text.get(at + 1..).and_then(|rest| rest.chars().next())
+            && (next == '_' || next == '$' || next == '>' || is_identifier_start(next))
         {
             return true;
         }

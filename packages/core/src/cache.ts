@@ -1,4 +1,5 @@
 import { currentOwner, type Owner } from "./extend";
+import { untrack } from "./ownership";
 
 /** Options of {@link cache}. @since 1.0.0 */
 export interface CacheOptions {
@@ -33,7 +34,8 @@ function rootOf(owner: Owner | null): Owner | null {
  * Memoizes `fn` per request: within one root (a server render, or the app on the client) the same
  * arguments return the same result without calling `fn` again. Arguments compare with `Object.is`,
  * position by position. Results are kept in a list bounded by `limit`; the oldest is dropped first.
- * A call that throws is not kept. Outside any owner nothing is scoped, so `fn` runs every time.
+ * A call that throws is not kept. `fn` runs untracked, so the first caller does not alone subscribe to what
+ * it reads. Outside any owner nothing is scoped, so `fn` runs every time.
  *
  * Use it to share one data fetch between components rendered in the same request.
  *
@@ -65,7 +67,7 @@ export function cache<A extends unknown[], R>(
   const scopes = new WeakMap<Owner, Entry[]>();
   return (...args: A): R => {
     const root = rootOf(currentOwner());
-    if (root === null) return fn(...args);
+    if (root === null) return untrack(() => fn(...args));
     let entries = scopes.get(root);
     if (entries === undefined) {
       entries = [];
@@ -74,7 +76,7 @@ export function cache<A extends unknown[], R>(
     for (const entry of entries) {
       if (sameArgs(entry.args, args)) return entry.value as R;
     }
-    const value = fn(...args);
+    const value = untrack(() => fn(...args));
     entries.push({ args, value });
     if (entries.length > limit) entries.shift();
     return value;

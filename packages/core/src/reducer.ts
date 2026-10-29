@@ -45,7 +45,7 @@ export function useReducer<S, A>(
 ): [Accessor<S>, (action: A) => void] {
   const [state, setState] = useSignal<S>(initialState, {
     equals: (options?.equals ?? Object.is) as Equals<S>,
-    ...(options?.name === undefined ? {} : { name: options.name }),
+    name: options?.name,
   });
   const dispatch = (action: A): void => {
     setState((previous) => reducer(previous, action));

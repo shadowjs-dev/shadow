@@ -75,13 +75,15 @@ export type Edges<T> = Array<T | number>;
 export class Signal<T = unknown> implements Source {
   /** Always 0, the kind of a signal. */
   readonly kind: number = KIND_SIGNAL;
+  // Fields the constructor assigns are `declare`d: a plain field would also emit an empty initializer
+  // (`parent;`) that every bundle carries.
   /**
    * The current value. Assigning it directly notifies no one: use `writeSignal`, or call `notify`
    * after the assignment.
    */
-  value: T;
+  declare value: T;
   /** Decides whether a write is a change; `false` treats every write as one. */
-  equals: Equals<T>;
+  declare equals: Equals<T>;
   /** The computations that read this signal in their last run, as pairs (see {@link Source.observers}). */
   observers: Edges<Computation> | null = null;
   /** Stamp of the last computation run that tracked this signal (dedupes repeated reads). */
@@ -90,7 +92,7 @@ export class Signal<T = unknown> implements Source {
    * Label shown by devtools and diagnostics.
    * @default undefined (the signal is unnamed)
    */
-  name: string | undefined;
+  declare name: string | undefined;
 
   /**
    * Creates a signal. Prefer `createSignalNode`, which takes the same arguments.
@@ -122,18 +124,20 @@ export class Signal<T = unknown> implements Source {
  * @since 1.0.0
  */
 export class Computation extends Owner implements Source {
+  // Fields the constructor assigns are `declare`d: a plain field would also emit an empty initializer
+  // (`parent;`) that every bundle carries.
   /** 1 for a memo, 2 for an effect. */
-  kind: number;
+  declare kind: number;
   /** How stale the node is: 0 (clean), 1 (a transitive source changed), 2 (a direct source changed). */
-  state: number;
+  declare state: number;
   /** Engine bit flags (queued, running, disposed, render phase, ...). Read-only outside the engine. */
-  flags: number;
+  declare flags: number;
   /** A memo's last value; an effect's last computed value when it has an `apply` stage. */
-  value: unknown;
+  declare value: unknown;
   /** The error a memo's last run threw, rethrown to its readers; undefined when it succeeded. */
   error: unknown = undefined;
   /** A memo's equality: readers are notified only when it says the new value differs. */
-  equals: Equals<unknown>;
+  declare equals: Equals<unknown>;
   /** The function each run calls with the previous value; null once disposed. */
   fn: ((previous: never) => unknown) | null;
   /**
@@ -153,12 +157,12 @@ export class Computation extends Owner implements Source {
   /** During a run: how many leading entries of `sources` were confirmed again (they keep their edges). */
   trackIndex = 0;
   /** Creation order; breaks ties between effects at equal depth (G-16). */
-  seq: number;
+  declare seq: number;
   /**
    * Label shown by devtools and diagnostics.
    * @default undefined (the computation is unnamed)
    */
-  name: string | undefined;
+  declare name: string | undefined;
 
   /**
    * Creates a computation that has not run yet. Prefer `createComputation`, which also runs or
@@ -197,10 +201,6 @@ export class Computation extends Owner implements Source {
         (flags & FLAG_RENDER) !== 0,
       );
     }
-  }
-
-  protected override reportDisposed(): void {
-    if (__DEV__) report(DEVTOOLS_EVENT.COMPUTATION_DISPOSED, this);
   }
 
   protected override release(): void {
@@ -595,12 +595,15 @@ export function recompute(node: Computation): void {
     rt.running = previousRunning;
     rt.recomputeDepth -= 1;
     node.flags &= ~FLAG_RUNNING;
-    // Sources this run did not read again are no longer dependencies.
-    if (node.trackIndex < node.sources.length) unlinkFrom(node, node.trackIndex);
+    // Sources this run did not read again are no longer dependencies. A node disposed while it ran
+    // (it disposed its own owner) keeps none: reads after the disposal must not leave edges that
+    // nothing will ever remove.
+    unlinkFrom(node, (node.flags & FLAG_DISPOSED) !== 0 ? 0 : node.trackIndex);
   }
 
-  const changed = node.kind === KIND_MEMO ? settleMemo(node, result, failed, failure) : true;
-  if (node.kind !== KIND_MEMO) settleEffect(node, result, failed, failure);
+  let changed = true;
+  if (node.kind === KIND_MEMO) changed = settleMemo(node, result, failed, failure);
+  else settleEffect(node, result, failed, failure);
   if (__DEV__) {
     report(
       DEVTOOLS_EVENT.COMPUTATION_RUN,
@@ -610,6 +613,21 @@ export function recompute(node: Computation): void {
       changed,
       sourcesOf(node),
     );
+  }
+}
+
+/**
+ * Calls a comparator untracked. It is a user callback: left tracked, the computation that writes (or the
+ * reader that pulled the memo, the listener again once the run is over) would subscribe to whatever it
+ * reads. Restored in `finally`, so a throwing comparator leaves the register as it found it.
+ */
+export function isEqual<T>(equals: (prev: T, next: T) => boolean, prev: T, next: T): boolean {
+  const listener = rt.listener;
+  rt.listener = null;
+  try {
+    return equals(prev, next);
+  } finally {
+    rt.listener = listener;
   }
 }
 
@@ -638,7 +656,7 @@ function settleMemo(
     node.error = undefined;
     const equals = node.equals;
     try {
-      changed = first || hadError || equals === false || !equals(node.value, result);
+      changed = first || hadError || equals === false || !isEqual(equals, node.value, result);
       if (changed) node.value = result;
     } catch (comparatorError) {
       // A throwing comparator is a failing memo, not a wedged graph: readers see the error.

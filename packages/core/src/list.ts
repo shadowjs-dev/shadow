@@ -23,13 +23,13 @@ export type ListSource<T> = () => readonly T[] | null | undefined | false;
  */
 class Row<T, U> {
   /** Reuse key: the item itself (unkeyed), `key(item)` (keyed) or the position (indexed). */
-  readonly key: unknown;
+  declare readonly key: unknown;
   /** False for a later copy of a key in a keyed list. Such a row is never reused. */
-  readonly first: boolean;
+  declare readonly first: boolean;
   /** Item last written to the row. Kept as a plain field so an unchanged item skips the signal. */
-  item: T;
+  declare item: T;
   /** Index last written to the row. */
-  index: number;
+  declare index: number;
   value: U = undefined as U;
   dispose: () => void = noop;
   /** Created by the first `item()` read; null until then. */

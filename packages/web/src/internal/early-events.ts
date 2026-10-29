@@ -12,6 +12,12 @@ export const DEFAULT_EARLY_EVENTS: readonly string[] = ["click", "input"];
 /** The window property the capture script writes. Its shape is checked before use. @internal */
 export const EARLY_CAPTURE_KEY = "__SHADOWJS_EARLY__";
 
+/**
+ * The most events the capture script keeps. A page whose bundle never loads would otherwise hold every
+ * click and keystroke of the visit; the first ones are the ones worth replaying. @internal
+ */
+export const MAX_EARLY_EVENTS = 100;
+
 /** Event names are plain lower-case words: anything else would end up inside the script text. */
 const EVENT_NAME = /^[a-z]+$/;
 
@@ -26,7 +32,7 @@ export function captureScriptBody(names: readonly string[]): string {
   return (
     "(function(){var d=document,n=" +
     list +
-    ",q=[];function c(e){q.push(e)}" +
+    `,q=[];function c(e){if(q.length<${MAX_EARLY_EVENTS})q.push(e)}` +
     "for(var i=0;i<n.length;i++)d.addEventListener(n[i],c,true);" +
     `window.${EARLY_CAPTURE_KEY}={queue:q,names:n,listener:c};})();`
   );
@@ -84,6 +90,27 @@ export function replayEarlyEvents(): void {
   for (const name of capture.names) document.removeEventListener(name, capture.listener, true);
   for (const event of capture.queue) {
     const target = event.target;
-    if (target instanceof Node) target.dispatchEvent(reissue(event));
+    if (target instanceof Node) target.dispatchEvent(withoutDefaultAction(reissue(event)));
   }
+}
+
+/**
+ * The replayed event runs the page's handlers, not the browser's default action: the real event
+ * already ran it when the user made it. A dispatched `click` on a link follows the link, so without
+ * this a link was followed twice. The native flag is set right away, which cancels the default action,
+ * and the handlers still see `defaultPrevented` as false (a router skips a click that is already
+ * prevented) until one of them prevents it itself.
+ */
+function withoutDefaultAction(event: Event): Event {
+  event.preventDefault();
+  let prevented = false;
+  Object.defineProperties(event, {
+    defaultPrevented: { get: () => prevented },
+    preventDefault: {
+      value: () => {
+        prevented = true;
+      },
+    },
+  });
+  return event;
 }

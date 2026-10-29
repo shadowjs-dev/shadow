@@ -23,25 +23,11 @@ export function byCreation(a: Computation, b: Computation): number {
   return a.depth - b.depth || a.seq - b.seq;
 }
 
-/**
- * Effects mostly arrive in creation order already; checking is O(n), sorting is not.
- * @internal
- */
-export function isOrdered(list: readonly Computation[]): boolean {
-  for (let i = 1; i < list.length; i += 1) {
-    const previous = list[i - 1];
-    const current = list[i];
-    if (previous !== undefined && current !== undefined && byCreation(previous, current) > 0) {
-      return false;
-    }
-  }
-  return true;
-}
-
 /** Runs every queued effect of one phase, parents before children, siblings by creation. */
 function drain(queue: Computation[]): number {
   const batch = queue.splice(0, queue.length);
-  if (!isOrdered(batch)) batch.sort(byCreation);
+  // Effects mostly arrive in creation order already: the sort then finds one ascending run and is O(n).
+  batch.sort(byCreation);
   for (const effect of batch) {
     effect.flags &= ~FLAG_QUEUED;
     if ((effect.flags & FLAG_DISPOSED) !== 0) continue;
@@ -100,26 +86,15 @@ export function flush(): void {
   if (__DEV__) report(DEVTOOLS_EVENT.FLUSH_START, renderQueue.length, userQueue.length);
   try {
     while (hasPending()) {
-      let aborted = false;
-      // Render passes count too: a render effect that keeps writing its own source must abort.
-      while (renderQueue.length > 0) {
-        passes += 1;
-        if (passes > MAX_FLUSH_PASSES) {
-          aborted = true;
-          break;
-        }
-        runs += drain(renderQueue);
-      }
-      if (!aborted && userQueue.length > 0) {
-        passes += 1;
-        if (passes > MAX_FLUSH_PASSES) aborted = true;
-        else runs += drain(userQueue);
-      }
-      if (aborted) {
+      // Render effects first, and until none is left; render passes count too: a render effect that
+      // keeps writing its own source must abort.
+      passes += 1;
+      if (passes > MAX_FLUSH_PASSES) {
         clearQueues();
         rt.uncaught.push(new ShadowError("INFINITE_LOOP"));
         break;
       }
+      runs += drain(renderQueue.length > 0 ? renderQueue : userQueue);
     }
   } finally {
     rt.flushing = false;
@@ -206,11 +181,39 @@ export function group<T>(fn: () => T): T {
   }
 }
 
-function combine(primary: unknown, secondary: unknown): unknown {
-  return new AggregateError(
-    [primary, secondary],
-    __DEV__ ? "Both the callback and the flush threw." : "SHADOW_BATCH_ERRORS",
-  );
+/**
+ * The body `batch` and `flushSync` share: runs `fn` with the effects deferred, then flushes (always when
+ * `sync`, else when this was the outermost batch and no flush is running). A throw of `fn` is held until
+ * the flush has run, and thrown with the flush's own error as an `AggregateError` when both threw.
+ */
+function runBatched<T>(fn: (() => T) | undefined, sync: boolean): T {
+  rt.batchDepth += 1;
+  let result: T | undefined;
+  let failure: unknown;
+  let failed = false;
+  try {
+    result = fn === undefined ? undefined : fn();
+  } catch (error) {
+    failed = true;
+    failure = error;
+  } finally {
+    rt.batchDepth -= 1;
+  }
+  if (sync || (rt.batchDepth === 0 && !rt.flushing && hasPending())) {
+    try {
+      flush();
+    } catch (error) {
+      if (failed) {
+        throw new AggregateError(
+          [failure, error],
+          __DEV__ ? "Both the callback and the flush threw." : "SHADOW_BATCH_ERRORS",
+        );
+      }
+      throw error;
+    }
+  }
+  if (failed) throw failure;
+  return result as T;
 }
 
 /**
@@ -236,28 +239,7 @@ function combine(primary: unknown, secondary: unknown): unknown {
  * @since 1.0.0
  */
 export function batch<T>(fn: () => T): T {
-  rt.batchDepth += 1;
-  let result: T | undefined;
-  let failure: unknown;
-  let failed = false;
-  try {
-    result = fn();
-  } catch (error) {
-    failed = true;
-    failure = error;
-  } finally {
-    rt.batchDepth -= 1;
-  }
-  if (rt.batchDepth === 0 && !rt.flushing && hasPending()) {
-    try {
-      flush();
-    } catch (error) {
-      if (failed) throw combine(failure, error);
-      throw error;
-    }
-  }
-  if (failed) throw failure;
-  return result as T;
+  return runBatched(fn, false);
 }
 
 /**
@@ -288,24 +270,5 @@ export function flushSync<T = void>(fn?: () => T): T {
     warn("FLUSH_IN_EFFECT");
     return (fn === undefined ? undefined : fn()) as T;
   }
-  rt.batchDepth += 1;
-  let result: T | undefined;
-  let failure: unknown;
-  let failed = false;
-  try {
-    result = fn === undefined ? undefined : fn();
-  } catch (error) {
-    failed = true;
-    failure = error;
-  } finally {
-    rt.batchDepth -= 1;
-  }
-  try {
-    flush();
-  } catch (error) {
-    if (failed) throw combine(failure, error);
-    throw error;
-  }
-  if (failed) throw failure;
-  return result as T;
+  return runBatched(fn, true);
 }

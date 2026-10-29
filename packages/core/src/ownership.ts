@@ -13,6 +13,64 @@ import {
 
 export type { Owner };
 
+/** Where the copies of core list themselves; `Symbol.for` makes the key the same in every copy. */
+const REGISTRY_KEY = "shadow-js.core.instances";
+
+/**
+ * The most copies the registry lists. Real programs have one, a misconfigured one two or three; the
+ * limit keeps a program that loads core in a loop (a hot-reload bug) from growing the shared map.
+ */
+const MAX_LISTED_COPIES = 8;
+
+/**
+ * The identity of this copy of the module (every evaluation of the module makes its own) and the build it is:
+ * the server build and the client build are different files by design, and tests that render on the server
+ * and hydrate in one process load one of each, so only copies of the same build count as duplicates.
+ */
+const COPY: { readonly server: boolean } = { server: __SERVER__ };
+
+/** The registry of the copies of core and how many roots each has alive, or undefined before any root exists. */
+function copyRegistry(): Map<{ readonly server: boolean }, number> | undefined {
+  const found = (globalThis as { [key: symbol]: unknown })[Symbol.for(REGISTRY_KEY)];
+  return found instanceof Map ? found : undefined;
+}
+
+/** Development only. Counts a disposed root out of this copy's entry; the entry goes with its last root. */
+function releaseRoot(): void {
+  const registry = copyRegistry();
+  const live = registry?.get(COPY);
+  if (registry === undefined || live === undefined) return;
+  if (live > 1) registry.set(COPY, live - 1);
+  else registry.delete(COPY);
+}
+
+/**
+ * Development only. Lists a new root under this copy of core in a registry on `globalThis`, which counts the
+ * live roots of every copy, and warns `DUPLICATE_CORE` (once per copy) when another copy of the same build has
+ * live roots: two copies cannot see each other's signals. A copy leaves the registry when its last root is disposed, so copies
+ * that never run at the same time (separate test files, a reload) do not warn. Called from `createRoot` only
+ * behind `__DEV__`, and only when a root is created, never when the module is imported. The release is one
+ * shared function, so a root costs no closure: rows of a list make a root each.
+ */
+function listRoot(root: Owner): void {
+  let registry = copyRegistry();
+  if (registry === undefined) {
+    registry = new Map();
+    (globalThis as { [key: symbol]: unknown })[Symbol.for(REGISTRY_KEY)] = registry;
+  }
+  const listed = registry.has(COPY);
+  for (const copy of registry.keys()) {
+    if (copy !== COPY && copy.server === COPY.server) {
+      warn("DUPLICATE_CORE");
+      break;
+    }
+  }
+  // A copy past the limit is not listed; the warning above has been given by then.
+  if (!listed && registry.size >= MAX_LISTED_COPIES) return;
+  registry.set(COPY, (registry.get(COPY) ?? 0) + 1);
+  addCleanup(root, releaseRoot);
+}
+
 /**
  * Runs `fn` without subscribing the running computation to anything `fn` reads. Use it inside an
  * effect or a memo to read a value without re-running when that value changes. The current owner
@@ -55,14 +113,16 @@ export interface RootOptions {
  * Creates an ownership scope. Everything created inside (effects, memos, cleanups, children) is
  * disposed together when `dispose` is called or, for attached roots, when the parent disposes. Use
  * it for code that runs outside a component, such as an app entry point, a test or a module that
- * owns long-lived effects.
+ * owns long-lived effects. Development builds also use the root to find a second copy of core: a root
+ * created while a root of another copy is alive warns `DUPLICATE_CORE` once.
  *
  * @param fn Body; receives the `dispose` function. Runs untracked, with the new root as owner.
  * @param options `detached` keeps the root out of the current owner. Undefined uses the default
  * (attached).
  * @returns Whatever `fn` returns.
  * @throws Rethrows any error thrown by `fn`, after the root and everything created in it are
- * disposed.
+ * disposed. When a cleanup of the root throws as well, both errors are thrown together as an
+ * `AggregateError` (the body's first), so the body's error is never replaced.
  * @example
  * import { createRoot, useEffect, useSignal } from "@shadow-js/core";
  *
@@ -81,10 +141,19 @@ export function createRoot<T>(fn: (dispose: () => void) => T, options?: RootOpti
   const current = currentOwner();
   const root = new Owner(detached ? null : current);
   if (detached) root.context = current === null ? null : current.context;
+  if (__DEV__) listRoot(root);
   try {
     return runInScope({ owner: root, listener: null }, () => fn(() => disposeOwner(root)));
   } catch (error) {
-    disposeOwner(root);
+    try {
+      disposeOwner(root);
+    } catch (cleanupError) {
+      // The body's error says what went wrong; a cleanup error must not replace it.
+      throw new AggregateError(
+        [error, cleanupError],
+        __DEV__ ? "The root body threw and so did its disposal." : "SHADOW_ROOT_ERRORS",
+      );
+    }
     throw error;
   }
 }

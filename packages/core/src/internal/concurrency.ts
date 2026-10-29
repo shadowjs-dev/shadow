@@ -11,7 +11,6 @@ import {
   FLAG_PARKED,
   FLAG_QUEUED,
   FLAG_RENDER,
-  FLAG_SUSPENDED,
   FLAG_TRANSITION,
   KIND_EFFECT,
 } from "./flags";
@@ -26,7 +25,7 @@ import {
 } from "./graph";
 import { addCleanup, handleError, Owner } from "./owner";
 import { clearQueues, hasPending, place, renderQueue, userQueue } from "./queue";
-import { byCreation, isOrdered, MAX_FLUSH_PASSES, reportUncaught, schedule } from "./scheduler";
+import { byCreation, MAX_FLUSH_PASSES, reportUncaught, schedule } from "./scheduler";
 import {
   type BoundaryHold,
   type Hooks,
@@ -51,6 +50,9 @@ import { isSuspension, SUSPENSION } from "./suspension";
 /** Transition-lane effects run per macrotask; between two chunks urgent work and input can run. */
 const LANE_CHUNK = 64;
 
+/** The length of the suspended list from which the disposed nodes are dropped, at each power of two. */
+const SUSPENDED_SWEEP_AT = 64;
+
 /** Visits `root` and every node below it. Iterative: the depth is user controlled. */
 function walk(root: Owner, visit: (node: Owner) => void): void {
   const stack: Owner[] = [root];
@@ -66,10 +68,21 @@ function walk(root: Owner, visit: (node: Owner) => void): void {
 function createHooks(): Hooks {
   const laneRender: Computation[] = [];
   const laneUser: Computation[] = [];
-  /** Resolvers of the transitions waiting for the lane to go idle. */
-  const waiters: Array<() => void> = [];
-  /** Memos and effects that caught a suspension; woken all at once when a boundary releases them. */
-  const suspended: Computation[] = [];
+  /**
+   * The promise every transition that waits for the lane shares (`waiting` counts the callers, for
+   * devtools). One promise instead of one resolver per call: while a hold stays engaged the list of resolvers grew
+   * with every `startTransition`, and all of them resolve at the same moment anyway.
+   */
+  let applied: Promise<void> | null = null;
+  let resolveApplied: (() => void) | null = null;
+  let waiting = 0;
+  /**
+   * Memos and effects that caught a suspension; woken all at once when a boundary releases them. A
+   * node is listed once (it is a set), and the disposed ones are dropped each time the list
+   * length is a power of two from `SUSPENDED_SWEEP_AT` on, so a hold that stays engaged cannot make the list, or the nodes it keeps alive,
+   * grow with the number of nodes that came and went.
+   */
+  const suspended = new Set<Computation>();
   /** Suspense boundaries currently holding a transition (the lane is busy while any holds). */
   let holds = 0;
   let scheduled = false;
@@ -83,7 +96,7 @@ function createHooks(): Hooks {
    */
   const drainLane = (queue: Computation[], limit: number): number => {
     const batch = queue.splice(0, limit);
-    if (!isOrdered(batch)) batch.sort(byCreation);
+    batch.sort(byCreation);
     for (const effect of batch) {
       if ((effect.flags & FLAG_TRANSITION) === 0) continue;
       effect.flags &= ~(FLAG_QUEUED | FLAG_TRANSITION);
@@ -104,10 +117,14 @@ function createHooks(): Hooks {
 
   /** Resolves the transitions that wait for the lane, once the lane is idle. */
   const settleLane = (): void => {
-    if (laneBusy() || waiters.length === 0) return;
-    const resolved = waiters.splice(0, waiters.length);
-    if (__DEV__) report(DEVTOOLS_EVENT.TRANSITION_END, resolved.length);
-    for (const resolve of resolved) resolve();
+    if (laneBusy() || resolveApplied === null) return;
+    const resolve = resolveApplied;
+    applied = resolveApplied = null;
+    if (__DEV__) {
+      report(DEVTOOLS_EVENT.TRANSITION_END, waiting);
+      waiting = 0;
+    }
+    resolve();
   };
 
   /** Asks for one lane macrotask (the timer lets the browser paint and take input first). */
@@ -168,11 +185,13 @@ function createHooks(): Hooks {
       rt.listener = listener;
     }
     if (__DEV__) report(DEVTOOLS_EVENT.TRANSITION_START);
-    const applied = new Promise<void>((resolve) => {
-      waiters.push(resolve);
+    if (__DEV__) waiting += 1;
+    applied ??= new Promise<void>((resolve) => {
+      resolveApplied = resolve;
     });
+    const shared = applied;
     settleLane();
-    return applied;
+    return shared;
   };
 
   /** The hook's `place`: parks a paused effect or queues a lane effect. */
@@ -218,8 +237,17 @@ function createHooks(): Hooks {
 
   const suspend = (node: Computation, error: unknown): boolean => {
     if (error !== SUSPENSION) return false;
-    node.flags |= FLAG_SUSPENDED;
-    suspended.push(node);
+    // Listed once: a node that suspends again before the wake-up is already in the set.
+    if (!suspended.has(node)) {
+      const size = suspended.size;
+      if (size >= SUSPENDED_SWEEP_AT && (size & (size - 1)) === 0) {
+        // A disposed node never wakes, so keeping it would leak it for as long as the hold lasts.
+        for (const entry of suspended) {
+          if (entry.disposed) suspended.delete(entry);
+        }
+      }
+      suspended.add(node);
+    }
     return true;
   };
 
@@ -238,15 +266,15 @@ function createHooks(): Hooks {
   };
 
   const wakeSuspended = (): void => {
-    const waiting = suspended.splice(0, suspended.length);
+    const woken = Array.from(suspended);
+    suspended.clear();
     // The woken work is still the transition: it runs in the lane, so a resource it reads again is
     // held the same way, not shown as a fallback by an urgent pass.
     const previous = rt.inTransition;
     rt.inTransition = true;
     try {
-      for (const node of waiting) {
-        if ((node.flags & FLAG_SUSPENDED) === 0 || node.disposed) continue;
-        node.flags &= ~FLAG_SUSPENDED;
+      for (const node of woken) {
+        if (node.disposed) continue;
         node.state = DIRTY;
         if (node.kind === KIND_EFFECT) place(node, true);
         else markObservers(node);

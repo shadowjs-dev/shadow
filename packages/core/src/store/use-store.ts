@@ -257,6 +257,11 @@ function replaceWith(root: object, value: unknown, label: string): void {
  * be `null` or another type (`Todo[] | null`) is a single value too: it is replaced as a whole, and
  * plain data assigned to it is read through the same fine-grained proxies a store uses.
  *
+ * A property read in a tracked context gets a small notifier. Reading many transient keys
+ * (`store.byId[id]` with churning ids) does not grow it for the life of the store: once an object
+ * has collected a few hundred notifiers, the ones nothing observes any more are dropped, and a key
+ * read again gets a fresh one that reflects the current value.
+ *
  * @param initial Initial value or plain data. Plain objects and arrays are wrapped in place, not
  * copied.
  * @param options `name` labels the store in messages. Undefined uses the default (unnamed).

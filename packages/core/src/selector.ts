@@ -15,9 +15,9 @@ class Entry implements SourceNode {
   subscribers = 0;
 
   /** The key this entry answers for. */
-  readonly key: unknown;
+  declare readonly key: unknown;
   /** Whether the key matches the selected value. */
-  value: boolean;
+  declare value: boolean;
 
   constructor(key: unknown, value: boolean) {
     this.key = key;
@@ -81,7 +81,11 @@ export function useSelector<T, K = T>(
   };
 
   const create = (key: K): Entry => {
-    const entry = new Entry(key, matches(key, currentValue()));
+    // `equals` is a user callback: it must not subscribe the reader that happens to register the key.
+    const entry = new Entry(
+      key,
+      untrack(() => matches(key, currentValue())),
+    );
     entries.set(key, entry);
     return entry;
   };

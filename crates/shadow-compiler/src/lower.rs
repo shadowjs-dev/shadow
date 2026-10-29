@@ -20,7 +20,7 @@ use crate::entities::decode_html_strict;
 use crate::error::{Result, fail_span, unsupported};
 use crate::ir::{Attr, ChildIR, ComponentIR, ElementIR, ExprIR, Namespace, RootIR, StaticValue};
 use crate::jsutil::{first_is_upper_like, js_trim, json_string, number_to_string};
-use crate::names::is_ignored_attribute;
+use crate::names::{attribute_name, is_ignored_attribute};
 use crate::nesting::{nesting_problem, self_nesting_problem};
 use crate::text::clean_jsx_text;
 use crate::tree::{NodeIx, Tree};
@@ -184,6 +184,26 @@ fn is_unsafe_template_char(c: char) -> bool {
     )
 }
 
+/// True for an attribute that holds a URL, under its HTML name or its React name (`xlinkHref`).
+fn is_url_attribute(name: &str) -> bool {
+    URL_ATTRIBUTES.contains(&name.to_lowercase().as_str())
+        || URL_ATTRIBUTES.contains(&attribute_name(name, true).as_str())
+}
+
+/// The names of the plain attributes of an element (`value`, `checked`, ...), as written.
+fn explicit_names<'e>(attributes: &'e [JSXAttributeItem<'_>]) -> Vec<&'e str> {
+    attributes
+        .iter()
+        .filter_map(|item| match item {
+            JSXAttributeItem::Attribute(attribute) => match &attribute.name {
+                JSXAttributeName::Identifier(it) => Some(it.name.as_str()),
+                JSXAttributeName::NamespacedName(_) => None,
+            },
+            JSXAttributeItem::SpreadAttribute(_) => None,
+        })
+        .collect()
+}
+
 struct TagInfo {
     component: bool,
     name: String,
@@ -226,25 +246,38 @@ impl<'t, 'a> Ctx<'t, 'a> {
     }
 
     fn tag_info(&self, name: &JSXElementName<'a>) -> Result<TagInfo> {
-        let simple = |value: &str| {
+        let simple = |value: &str, start: u32, end: u32| {
             if value == "this" {
-                return TagInfo {
+                return Ok(TagInfo {
                     component: true,
                     name: value.to_string(),
                     custom: false,
-                };
+                });
             }
             let component = first_is_upper_like(value) || value.starts_with(['_', '$']);
-            TagInfo {
+            // `Foo-Bar` would be the subtraction `Foo - Bar` in the generated call: a component is a variable.
+            if component && value.contains('-') {
+                return fail_span(
+                    "BAD_TAG",
+                    format!(
+                        "\"{value}\" is not a valid component name: a component is a variable, and a name with \"-\" cannot be one. Write a custom element in lower case."
+                    ),
+                    start,
+                    end,
+                );
+            }
+            Ok(TagInfo {
                 component,
                 name: value.to_string(),
                 custom: !component && value.contains('-'),
-            }
+            })
         };
         match name {
-            JSXElementName::Identifier(it) => Ok(simple(it.name.as_str())),
-            JSXElementName::IdentifierReference(it) => Ok(simple(it.name.as_str())),
-            JSXElementName::ThisExpression(_) => Ok(simple("this")),
+            JSXElementName::Identifier(it) => simple(it.name.as_str(), it.span.start, it.span.end),
+            JSXElementName::IdentifierReference(it) => {
+                simple(it.name.as_str(), it.span.start, it.span.end)
+            }
+            JSXElementName::ThisExpression(it) => simple("this", it.span.start, it.span.end),
             JSXElementName::MemberExpression(member) => Ok(TagInfo {
                 component: true,
                 name: format!(
@@ -307,13 +340,18 @@ impl<'t, 'a> Ctx<'t, 'a> {
             }
             // A literal script URL is not written into the template: it goes through the checked
             // attribute writer, which refuses it (and warns in development).
-            if URL_ATTRIBUTES.contains(&name.to_lowercase().as_str()) && is_script_url(text) {
+            // The React spelling is checked as well: `xlinkHref` is the attribute `xlink:href` in SVG.
+            if is_url_attribute(name) && is_script_url(text) {
                 return property(name, json_string(text));
             }
         }
         if name == "defaultChecked" {
             return plain("checked", StaticValue::True, None);
         }
+        // The template parser would rewrite the value (CR becomes LF, NUL becomes U+FFFD): like a
+        // literal child with such text, it is not written into the markup but set at run time.
+        let unsafe_text =
+            matches!(&value, StaticValue::Text(text) if text.chars().any(is_unsafe_template_char));
         if name == "defaultValue" || name == "value" {
             if tag == "select" || tag == "textarea" {
                 let text = match &value {
@@ -322,9 +360,15 @@ impl<'t, 'a> Ctx<'t, 'a> {
                 };
                 return property("value", json_string(text));
             }
+            if unsafe_text && let StaticValue::Text(text) = &value {
+                return property("value", json_string(text));
+            }
             if name == "defaultValue" {
                 return plain("value", value, None);
             }
+        }
+        if unsafe_text && let StaticValue::Text(text) = &value {
+            return property(name, json_string(text));
         }
         plain(name, value, js)
     }
@@ -415,6 +459,12 @@ impl<'t, 'a> Ctx<'t, 'a> {
         tag: Option<&str>,
     ) -> Result<Vec<Attr<'a>>> {
         let mut out = Vec::with_capacity(attributes.len());
+        // An explicit `value` (or `checked`) wins over its default: one write, whichever comes first.
+        let explicit = if tag.is_some() {
+            explicit_names(attributes)
+        } else {
+            Vec::new()
+        };
         for item in attributes {
             let attribute = match item {
                 JSXAttributeItem::SpreadAttribute(spread) => {
@@ -431,6 +481,11 @@ impl<'t, 'a> Ctx<'t, 'a> {
             let attribute_ix = crate::classify::node_ix(attribute.node_id());
             let name = Self::attr_name(&attribute.name);
             if tag.is_some() && (name == "key" || is_ignored_attribute(&name)) {
+                continue;
+            }
+            if (name == "defaultValue" && explicit.contains(&"value"))
+                || (name == "defaultChecked" && explicit.contains(&"checked"))
+            {
                 continue;
             }
             let value = attribute.value.as_ref();
@@ -782,6 +837,13 @@ impl<'t, 'a> Ctx<'t, 'a> {
                 start,
             )));
         }
+        let children = if own == Namespace::Html
+            && matches!(info.name.as_str(), "script" | "style" | "title")
+        {
+            join_text_children(children)
+        } else {
+            children
+        };
         Ok(RootIR::Element(ElementIR::new(
             info.name,
             own,
@@ -845,6 +907,47 @@ fn element_tag_name<'a>(name: &JSXElementName<'a>) -> &'a str {
         JSXElementName::IdentifierReference(it) => it.name.as_str(),
         _ => "",
     }
+}
+
+/// The text and slots of a text-only element (`script`, `style`, `title`) as one slot, the way
+/// [`textarea_value`] does it for a textarea: the server writes them as a single run of text, so the
+/// browser output holds a single region for it to adopt. A lone child is left as it is.
+fn join_text_children<'a>(children: Vec<ChildIR<'a>>) -> Vec<ChildIR<'a>> {
+    if children.len() < 2
+        || children
+            .iter()
+            .any(|child| !matches!(child, ChildIR::Slot(_) | ChildIR::Text(_)))
+    {
+        return children;
+    }
+    let Some(first) = children.iter().find_map(|child| match child {
+        ChildIR::Slot(expr) => Some(expr.node),
+        _ => None,
+    }) else {
+        return children;
+    };
+    let mut parts = Vec::with_capacity(children.len());
+    let mut dynamic = false;
+    for child in &children {
+        match child {
+            ChildIR::Text(text) => parts.push(json_string(text)),
+            ChildIR::Slot(expr) => {
+                dynamic |= expr.dynamic;
+                parts.push(format!("({})", expr.text));
+            }
+            _ => {}
+        }
+    }
+    // Joined as an array so a child that is `null`, `undefined` or a boolean writes nothing (as it does for
+    // any other child, and for a lone one): `join` takes the first two as empty, the filter the booleans.
+    vec![ChildIR::Slot(ExprIR {
+        text: Cow::Owned(format!(
+            "[{}].filter((part) => typeof part !== \"boolean\").join(\"\")",
+            parts.join(", ")
+        )),
+        node: first,
+        dynamic,
+    })]
 }
 
 /// A textarea's dynamic children are its value: `<textarea>{text()}</textarea>` binds the `value`

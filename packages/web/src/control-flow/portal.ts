@@ -189,6 +189,10 @@ export function Portal(props: PortalProps): null {
     ({ host, shadow }) => {
       if (host === null) {
         unmount();
+        // The server block was adopted at the call site but has nowhere to live: leaving it would show
+        // content the client does not render (stripLeftovers removes the blocks nobody claimed).
+        for (const node of adopted ?? []) node.parentNode?.removeChild(node);
+        adopted = undefined;
         if (__DEV__ && !warned) {
           warned = true;
           console.warn(

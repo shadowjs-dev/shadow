@@ -151,8 +151,8 @@ describe("setAttribute(): URL attributes", () => {
     }
   });
 
-  it("[ATT-23] every URL attribute is protected: href, src, action, formaction, srcdoc, poster, data", () => {
-    const names = ["href", "src", "action", "formaction", "srcdoc", "poster", "data"];
+  it("[ATT-23] every URL attribute is protected: href, src, action, formaction, poster, data (srcdoc is an HTML sink, see WEB-R3-3)", () => {
+    const names = ["href", "src", "action", "formaction", "poster", "data"];
     for (const name of names) {
       resetWebWarningDedupe();
       const node = el();

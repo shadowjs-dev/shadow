@@ -15,7 +15,7 @@ import type {
 } from "./ir";
 import { cleanJsxText } from "./jsx-text";
 import { nestingProblem, selfNestingProblem } from "./nesting";
-import { IGNORED_ATTRIBUTES } from "./react-names";
+import { attributeName, IGNORED_ATTRIBUTES } from "./react-names";
 
 /** JSX nesting deeper than this is rejected (R-CODE-12): it is never legitimate source. */
 export const MAX_JSX_DEPTH = 400;
@@ -128,6 +128,15 @@ function tagInfo(ctx: LowerContext, name: AstNode): TagInfo {
     if (value === "this") return { kind: "component", name: value, custom: false };
     const first = value.charAt(0);
     const isComponent = first !== first.toLowerCase() || first === "_" || first === "$";
+    // `Foo-Bar` would be the subtraction `Foo - Bar` in the generated call: a component is a variable.
+    if (isComponent && value.includes("-")) {
+      fail(
+        ctx,
+        "BAD_TAG",
+        `"${value}" is not a valid component name: a component is a variable, and a name with "-" cannot be one. Write a custom element in lower case.`,
+        name,
+      );
+    }
     return {
       kind: isComponent ? "component" : "element",
       name: value,
@@ -201,6 +210,11 @@ function isScriptUrl(value: string): boolean {
   );
 }
 
+/** True for an attribute that holds a URL, under its HTML name or its React name (`xlinkHref`). */
+function isUrlAttribute(name: string): boolean {
+  return URL_ATTRIBUTES.has(name.toLowerCase()) || URL_ATTRIBUTES.has(attributeName(name, true));
+}
+
 /** Properties that have no HTML attribute form: a literal is applied as a property, once. */
 const PROPERTY_ONLY = new Set(["innerHTML", "textContent", "innerText"]);
 
@@ -233,15 +247,23 @@ function staticAttribute(
     return property(name, JSON.stringify(value));
   // A literal script URL is not written into the template: it goes through the checked attribute
   // writer, which refuses it (and warns in development), exactly like a dynamic value.
-  if (typeof value === "string" && URL_ATTRIBUTES.has(name.toLowerCase()) && isScriptUrl(value))
+  // The React spelling is checked as well: `xlinkHref` is the attribute `xlink:href` in SVG.
+  if (typeof value === "string" && isUrlAttribute(name) && isScriptUrl(value))
     return property(name, JSON.stringify(value));
+
   if (name === "defaultChecked") return { kind: "static", name: "checked", value: true, start };
   if (name === "defaultValue" || name === "value") {
     if (tag === "select" || tag === "textarea") {
       return property("value", JSON.stringify(typeof value === "string" ? value : ""));
     }
+    // The template parser would rewrite the value (CR becomes LF, NUL becomes U+FFFD): like a literal
+    // child with such text, it is not written into the markup but set at run time.
+    if (typeof value === "string" && UNSAFE_TEMPLATE_TEXT.test(value))
+      return property("value", JSON.stringify(value));
     if (name === "defaultValue") return { kind: "static", name: "value", value, start };
   }
+  if (typeof value === "string" && UNSAFE_TEMPLATE_TEXT.test(value))
+    return property(name, JSON.stringify(value));
   return js === undefined
     ? { kind: "static", name, value, start }
     : { kind: "static", name, value, js, start };
@@ -293,6 +315,17 @@ function innerHtmlAttr(
   };
 }
 
+/** The names of the plain attributes of an element (`value`, `checked`, ...), as written. */
+function explicitNames(attributes: AstNode[]): Set<string> {
+  const names = new Set<string>();
+  for (const attribute of attributes) {
+    if (attribute.type === "JSXSpreadAttribute") continue;
+    const nameNode = nodeAt(attribute, "name");
+    if (nameNode !== null && nameNode.type === "JSXIdentifier") names.add(str(nameNode, "name"));
+  }
+  return names;
+}
+
 /**
  * Lowers the attributes of one element or component. `tag` is the lower-case element name, or `null`
  * for a component. An intrinsic element drops the React-only props that have no DOM form (`key`,
@@ -301,6 +334,8 @@ function innerHtmlAttr(
  */
 function lowerAttrs(ctx: LowerContext, attributes: AstNode[], tag: string | null): AttrIR[] {
   const out: AttrIR[] = [];
+  // An explicit `value` (or `checked`) wins over its default: one write, whichever comes first.
+  const explicit = tag === null ? new Set<string>() : explicitNames(attributes);
   for (const attribute of attributes) {
     if (attribute.type === "JSXSpreadAttribute") {
       const argument = nodeAt(attribute, "argument");
@@ -312,6 +347,11 @@ function lowerAttrs(ctx: LowerContext, attributes: AstNode[], tag: string | null
     if (nameNode === null) continue;
     const name = attrName(ctx, nameNode);
     if (tag !== null && (name === "key" || IGNORED_ATTRIBUTES.has(name))) continue;
+    if (
+      (name === "defaultValue" && explicit.has("value")) ||
+      (name === "defaultChecked" && explicit.has("checked"))
+    )
+      continue;
     const value = nodeAt(attribute, "value");
     if (tag !== null && name === "dangerouslySetInnerHTML") {
       out.push(innerHtmlAttr(ctx, value, tag, attribute));
@@ -564,10 +604,43 @@ export function lowerJsx(
     ns: own,
     custom: info.custom,
     attrs,
-    children,
+    children:
+      own === "html" && TEXT_ONLY_PARENTS.has(info.name) ? joinTextChildren(children) : children,
     start: node.start,
   };
   return element;
+}
+
+/**
+ * Elements whose content is text and nothing else (the parser reads it without tags or comments):
+ * the server cannot mark where a child of one begins and ends, so its children are one value.
+ */
+const TEXT_ONLY_PARENTS = new Set(["script", "style", "title"]);
+
+/**
+ * The text and slots of a text-only element as one slot, the way {@link textareaValue} does it for a
+ * textarea: the server writes them as a single run of text, so the browser output holds a single
+ * region for it to adopt. A lone child is left as it is.
+ */
+function joinTextChildren(children: ChildIR[]): ChildIR[] {
+  if (children.length < 2) return children;
+  if (children.some((child) => child.kind !== "slot" && child.kind !== "text")) return children;
+  const slots = children.filter((child): child is SlotIR => child.kind === "slot");
+  const first = slots[0];
+  if (first === undefined) return children;
+  // Joined as an array so a child that is `null`, `undefined` or a boolean writes nothing (as it does for any
+  // other child, and for a lone one): `join` takes the first two as empty, the filter the booleans.
+  const text = `[${children
+    .map((child) =>
+      child.kind === "text" ? JSON.stringify(child.value) : `(${(child as SlotIR).expr.text})`,
+    )
+    .join(", ")}].filter((part) => typeof part !== "boolean").join("")`;
+  return [
+    {
+      kind: "slot",
+      expr: { text, node: first.expr.node, dynamic: slots.some((slot) => slot.expr.dynamic) },
+    },
+  ];
 }
 
 /**

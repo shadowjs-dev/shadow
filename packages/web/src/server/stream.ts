@@ -9,7 +9,7 @@ import { attachRootErrors, type RootErrorOptions } from "../control-flow/root-er
 import { runWithServerHead, type ServerHead } from "../head/server-head";
 import { createRootScope, resourceKey, withScope } from "../internal/hydration-scope";
 import { type StreamBoundary, StreamContext, type StreamSink } from "../internal/stream-context";
-import { SsrError } from "./errors";
+import { MAX_TIMER_MS, SsrError } from "./errors";
 // biome-ignore lint/suspicious/noShadowRestrictedNames: `escape` is the compiler's SSR helper name.
 import { escape } from "./escape";
 import { portalCollectorFor, type ServerPortals, withPortalSink } from "./portals";
@@ -32,7 +32,7 @@ export interface StreamOptions {
    */
   readonly nonce?: string;
   /**
-   * Upper bound for the whole stream, in milliseconds, a positive finite number. When it runs out, the stream errors with an
+   * Upper bound for the whole stream, in milliseconds, a positive finite number (values above 2147483647 count as 2147483647). When it runs out, the stream errors with an
    * `SsrError` whose `code` is `SSR_TIMEOUT`.
    * @default 30000
    */
@@ -283,7 +283,7 @@ export function renderToStream(
             reject(
               new SsrError("SSR_TIMEOUT", `The stream did not finish within ${timeoutMs} ms.`),
             ),
-          timeoutMs,
+          Math.min(timeoutMs, MAX_TIMER_MS),
         );
       });
       const onAbort = (): void =>

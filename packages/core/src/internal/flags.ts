@@ -31,5 +31,3 @@ export const FLAG_LANE = 512;
 export const FLAG_TRANSITION = 1024;
 /** Effect was due while its owner was paused: it waits, unqueued, until the owner resumes. */
 export const FLAG_PARKED = 2048;
-/** Computation threw a suspension: it keeps its previous value until its boundary releases it. */
-export const FLAG_SUSPENDED = 4096;

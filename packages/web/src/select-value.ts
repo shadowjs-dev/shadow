@@ -1,14 +1,10 @@
 /** The values an array stands for, as strings; null and undefined entries are skipped. */
 function listed(value: readonly unknown[]): Set<string> {
-  const values = new Set<string>();
-  for (const item of value) {
-    if (item !== null && item !== undefined) values.add(String(item));
-  }
-  return values;
+  return new Set(value.filter((item) => item !== null && item !== undefined).map(String));
 }
 
-/** The string a single value assigns to `select.value`; null and undefined clear the choice. */
-function single(value: unknown): string {
+/** The string a value assigns to `select.value`, `innerHTML` or `textContent`; null and undefined are empty. @internal */
+export function plainText(value: unknown): string {
   return value === null || value === undefined ? "" : String(value);
 }
 
@@ -38,16 +34,5 @@ export function setSelectValue(select: HTMLSelectElement, value: unknown): void 
     for (const option of Array.from(select.options)) option.selected = wanted.has(option.value);
     return;
   }
-  select.value = single(value);
-}
-
-/** True when the select already shows `value` the way {@link setSelectValue} would leave it. @internal */
-export function selectShows(select: HTMLSelectElement, value: unknown): boolean {
-  if (select.multiple && Array.isArray(value)) {
-    const wanted = listed(value);
-    return Array.from(select.options).every(
-      (option) => option.selected === wanted.has(option.value),
-    );
-  }
-  return select.value === single(value);
+  select.value = plainText(value);
 }

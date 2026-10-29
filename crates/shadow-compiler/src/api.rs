@@ -81,13 +81,9 @@ pub enum Outcome {
 const INLINE_LIMIT: usize = 1024;
 
 /// Bracket nesting beyond this is refused before parsing: the stack of the compile thread (1 GiB)
-/// would run out for the parser's recursion, and no real module nests anywhere near it.
-#[cfg(not(target_arch = "wasm32"))]
+/// would run out for the parser's recursion, and no real module nests anywhere near it. The
+/// WebAssembly build has the same limit: its host runs it on a stack of that size when the input is deep.
 const MAX_BRACKET_DEPTH: usize = 150_000;
-
-/// The same limit for WebAssembly, whose stack is fixed at link time.
-#[cfg(target_arch = "wasm32")]
-const MAX_BRACKET_DEPTH: usize = 2_000;
 
 /// The deepest bracket nesting of the text, counted without regard for strings and comments (an
 /// over-estimate is harmless: it only decides whether a module is refused or moved to a big stack).

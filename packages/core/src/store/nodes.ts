@@ -14,7 +14,11 @@ const RESERVED_KEYS: ReadonlySet<string> = new Set(["__proto__", "constructor", 
  * inside a tracked computation, so untracked data costs one small record per object.
  */
 export interface NodeState {
-  /** One signal per property read in a tracked context, keyed by property name. */
+  /**
+   * One signal per property read in a tracked context, keyed by property name. A signal is only a
+   * notifier (it holds no value), so one that nothing observes any more is dropped by a sweep (see
+   * `signalFor`) and a later read simply makes a new one.
+   */
   signals: Map<string, SignalNode<number>> | null;
   /** Notified when a property is added or removed, or an array changes length. */
   keys: SignalNode<number> | null;
@@ -126,6 +130,9 @@ export function nodeOf(raw: object): NodeState {
   return node;
 }
 
+/** The map size at which the first sweep of unobserved key signals runs. */
+const SWEEP_AT = 256;
+
 function signalFor(node: NodeState, key: string): SignalNode<number> {
   let signals = node.signals;
   if (signals === null) {
@@ -134,6 +141,17 @@ function signalFor(node: NodeState, key: string): SignalNode<number> {
   }
   let signal = signals.get(key);
   if (signal === undefined) {
+    // Reading many transient keys (`store.byId[id]` with churning ids) would keep one signal per key
+    // for the life of the store. The sweep runs when the map reaches a power of two from SWEEP_AT on,
+    // so its cost is amortized O(1) per new key, and the map stays within about twice the number of
+    // keys that are observed at that moment (plus SWEEP_AT).
+    const size = signals.size;
+    if (size >= SWEEP_AT && (size & (size - 1)) === 0) {
+      // Safe at any time: a signal carries no value, and the next read of its key makes a fresh one.
+      for (const [other, node] of signals) {
+        if ((node.observers?.length ?? 0) === 0) signals.delete(other);
+      }
+    }
     signal = createSignalNode(0, false);
     signals.set(key, signal);
   }

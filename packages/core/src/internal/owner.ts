@@ -28,8 +28,10 @@ export type ContextMap = Record<symbol, unknown>;
  * @since 1.0.0
  */
 export class Owner {
+  // Fields the constructor assigns are `declare`d: a plain field would also emit an empty initializer
+  // (`parent;`) that every bundle carries.
   /** The owner this node was created under, or null for a root. Kept after disposal. */
-  parent: Owner | null;
+  declare parent: Owner | null;
   /** The newest child that is still alive, or null when there is none. */
   lastChild: Owner | null = null;
   /** The next older sibling that is still alive, or null. */
@@ -42,7 +44,7 @@ export class Owner {
    */
   cleanups: Cleanup | Cleanup[] | null = null;
   /** The context values this node sees: inherited from the parent at creation, null for a root. */
-  context: ContextMap | null;
+  declare context: ContextMap | null;
   /**
    * The handlers registered with `onError` or `catchError`, oldest first (they are tried newest
    * first), or null for none. A computation clears them before each run.
@@ -53,21 +55,24 @@ export class Owner {
   /** Number of ids useId() has handed out from this owner. */
   idCount = 0;
   /** Position among the parent's children, assigned at creation. */
-  index: number;
+  declare index: number;
   /** Distance from the root: 0 for a root, the parent's depth plus one otherwise. */
-  depth: number;
+  declare depth: number;
   /**
    * The hydration-scope prefix of a component's owner, set by the renderer. When present, useId()
    * builds the ids below it from this prefix instead of the owner path.
    * @default undefined
    */
+  // A real field, not `declare`d: the renderer sets it only on component owners, and an owner shape that
+  // already holds it keeps every owner on one hidden class.
   idPrefix: string | undefined;
   /** True once the node has been disposed. */
   disposed = false;
   /**
    * While this returns true, user effects (and `onMount`) created below this owner wait: they do
    * not run until it returns false for the first time. Suspense sets it so the effects of content
-   * that is still loading are held back. The read is tracked.
+   * that is still loading are held back. The read is tracked. A node starts with the gate of its
+   * parent, so the nearest gate is the one on the owner an effect is created under.
    */
   gate: (() => boolean) | null = null;
   /**
@@ -83,12 +88,15 @@ export class Owner {
    */
   constructor(parent: Owner | null) {
     this.parent = parent;
-    this.context = parent === null ? null : parent.context;
-    this.depth = parent === null ? 0 : parent.depth + 1;
-    this.pauses = parent === null ? 0 : parent.pauses;
     if (parent === null) {
-      this.index = 0;
+      this.context = null;
+      this.depth = this.index = 0;
     } else {
+      this.context = parent.context;
+      this.depth = parent.depth + 1;
+      this.pauses = parent.pauses;
+      // The nearest gate above, copied: a boundary sets its own gate before it creates what lives below it.
+      this.gate = parent.gate;
       this.index = parent.childCount;
       parent.childCount += 1;
       const last = parent.lastChild;
@@ -102,15 +110,11 @@ export class Owner {
     }
   }
 
-  /** Tells devtools this node is gone. Computations override it with their own event. */
-  protected reportDisposed(): void {
-    if (__DEV__) report(DEVTOOLS_EVENT.OWNER_DISPOSED, this);
-  }
-
-  /** Hook for subclasses: release graph edges before the node is marked disposed. */
-  protected release(): void {
-    // Plain owners hold no graph edges.
-  }
+  /**
+   * Hook for subclasses: release graph edges before the node is marked disposed. Declared, not
+   * defined: a plain owner holds no graph edges, and an empty method would ship in every bundle.
+   */
+  protected release?(): void;
 
   /**
    * Disposes this node only (children must already be gone).
@@ -130,8 +134,14 @@ export class Owner {
       this.prevSibling = null;
       this.nextSibling = null;
     }
-    this.release();
-    this.reportDisposed();
+    this.release?.();
+    // A computation reports itself with its own event (it is the only subclass, and only it has a kind).
+    if (__DEV__) {
+      report(
+        "kind" in this ? DEVTOOLS_EVENT.COMPUTATION_DISPOSED : DEVTOOLS_EVENT.OWNER_DISPOSED,
+        this,
+      );
+    }
     this.runCleanups();
   }
 

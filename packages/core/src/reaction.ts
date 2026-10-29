@@ -19,7 +19,7 @@ import { untrack } from "./ownership";
  *
  * @param onInvalidate Called once, untracked, after a change of a tracked read.
  * @returns `track(fn)`. Each call replaces the previous tracking. Tracking lives in a child of the
- * owner that called `useReaction`, so it stops when that owner is disposed.
+ * owner that called `useReaction`, so it stops when that owner is disposed; calling `track` after that does nothing.
  * @example
  * import { useReaction, useSignal } from "@shadow-js/core";
  *
@@ -38,6 +38,11 @@ export function useReaction(onInvalidate: () => void): (track: () => void) => vo
   let scope: Owner | null = null;
   return (track: () => void): void => {
     if (scope !== null) disposeOwner(scope);
+    // The owner is gone: a scope made now would hang on it and never be disposed.
+    if (owner?.disposed === true) {
+      scope = null;
+      return;
+    }
     const next = createOwner(owner);
     scope = next;
     let tracking = true;

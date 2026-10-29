@@ -1,3 +1,4 @@
+import { SRCDOC_DYNAMIC_DETAIL, warnOnce } from "../internal/diagnostics";
 import { invalid } from "./errors";
 import { escapeHtml, resolveValue } from "./escape";
 
@@ -11,7 +12,6 @@ const URL_ATTRIBUTES: ReadonlySet<string> = new Set([
   "action",
   "formaction",
   "xlink:href",
-  "srcdoc",
   "poster",
   "data",
 ]);
@@ -131,6 +131,9 @@ function assertNotSymbol(value: unknown): void {
  *   `"true"` for those same names). Other values are written as `String(value)`, HTML-escaped.
  * - URL attributes whose value would run script are dropped, with the check of
  *   `isUnsafeUrlAttribute` (including the SVG animation attributes `values`, `from`, `to`, `by`).
+ * - `srcdoc` is an HTML sink, not a URL: its value is a document the frame runs, escaped for the attribute
+ *   and otherwise written as it is, with the trust of `innerHTML`. Sanitize it and give the frame a `sandbox`
+ *   attribute. Development builds warn once with `SRCDOC_DYNAMIC`.
  * - `on*` names are dropped: event handlers never reach markup.
  * - Accessors are called (untracked) until a plain value remains.
  *
@@ -159,6 +162,7 @@ export function ssrAttribute(name: string, value: unknown, isBoolean = false): s
   if (isBoolean) return resolved ? ` ${name}` : "";
   const text = attributeText(lowerName, resolved);
   if (text === null) return "";
+  if (__DEV__ && lowerName === "srcdoc") warnOnce("SRCDOC_DYNAMIC", SRCDOC_DYNAMIC_DETAIL);
   if (isUnsafeAttributeValue(lowerName, text)) return "";
   return ` ${name}="${escapeHtml(text)}"`;
 }

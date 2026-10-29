@@ -4,31 +4,8 @@ import { batch, getOwner, onCleanup, untrack } from "@shadow-js/core";
  * Events that may be delegated: composed events, which leave a shadow root and reach the document.
  * `change` is not composed, so it is bound on its element (see the note on `bindEvent`).
  */
-const DELEGATED_EVENTS = new Set([
-  "click",
-  "dblclick",
-  "input",
-  "keydown",
-  "keyup",
-  "keypress",
-  "pointerdown",
-  "pointerup",
-  "pointermove",
-  "mousedown",
-  "mouseup",
-  "mousemove",
-  "focusin",
-  "focusout",
-  "beforeinput",
-  "touchstart",
-  "touchend",
-  "touchmove",
-  "contextmenu",
-  "mouseover",
-  "mouseout",
-  "pointerover",
-  "pointerout",
-]);
+const DELEGATED_EVENTS =
+  /^(?:click|dblclick|input|beforeinput|contextmenu|key(?:down|up|press)|(?:pointer|mouse)(?:down|up|move|over|out)|focus(?:in|out)|touch(?:start|end|move))$/;
 
 /** Documents that already carry the delegated listener for a given event name. */
 const installed = new WeakMap<Document, Set<string>>();
@@ -41,19 +18,13 @@ interface Binding {
 }
 
 /** Calls `fn` with `this` = node, retargeting `currentTarget` for the duration of the call. */
-function invoke(binding: Binding, node: EventTarget, event: Event, args: unknown[]): void {
+function invoke(fn: Binding["fn"], node: EventTarget, event: Event, args: unknown[]): void {
   Object.defineProperty(event, "currentTarget", { configurable: true, get: () => node });
   try {
-    untrack(() => binding.fn.call(node, ...args));
+    untrack(() => fn.call(node, ...args));
   } finally {
     Reflect.deleteProperty(event, "currentTarget");
   }
-}
-
-/** Reads a compiler-style expando (`node.$$click`), if present. */
-function expando(node: EventTarget, key: string): unknown {
-  const holder: object = node;
-  return Reflect.get(holder, key);
 }
 
 /**
@@ -72,16 +43,11 @@ function dispatchPath(event: Event): void {
   const errors: unknown[] = [];
   for (const node of event.composedPath()) {
     if (event.cancelBubble) break;
-    const fn = expando(node, key);
+    const fn = Reflect.get(node, key);
     if (typeof fn !== "function") continue;
-    const data = expando(node, dataKey);
-    const binding: Binding = {
-      fn: fn as (this: EventTarget, ...args: unknown[]) => unknown,
-      data,
-      tuple: data !== undefined,
-    };
+    const data = Reflect.get(node, dataKey);
     try {
-      invoke(binding, node, event, binding.tuple ? [data, event] : [event]);
+      invoke(fn as Binding["fn"], node, event, data === undefined ? [event] : [data, event]);
     } catch (error) {
       errors.push(error);
     }
@@ -119,10 +85,14 @@ function bindListenerObject(
   object: ListenerObject,
   capture: boolean,
 ): () => void {
-  const options: AddEventListenerOptions = { capture: object.capture === true || capture };
-  if (object.once !== undefined) options.once = object.once;
-  if (object.passive !== undefined) options.passive = object.passive;
-  if (object.signal !== undefined) options.signal = object.signal;
+  const { once, passive, signal } = object;
+  // A member that is `undefined` counts as absent to the DOM, so none of them needs a check.
+  const options = {
+    capture: object.capture === true || capture,
+    once,
+    passive,
+    signal,
+  } as AddEventListenerOptions;
   const listener = (event: Event): void => {
     batch(() => untrack(() => object.handleEvent(event)));
   };
@@ -258,7 +228,16 @@ export function bindEvent(
   // One delegated slot per event name: a second handler for the same name on this element (React's
   // onInput and onChange on one text input) binds natively, so both run.
   const slot = `$$${name}`;
-  if (delegate && !capture && DELEGATED_EVENTS.has(name) && Reflect.get(el, slot) === undefined) {
+  // The delegated slot tells a tuple from a plain handler by its data being defined, so a tuple whose
+  // data is undefined is bound natively, where it still receives `(undefined, event)`.
+  const plain = !binding.tuple || binding.data !== undefined;
+  if (
+    delegate &&
+    plain &&
+    !capture &&
+    DELEGATED_EVENTS.test(name) &&
+    Reflect.get(el, slot) === undefined
+  ) {
     delegateEvents([name], delegationDocument(el));
     const dataKey = `${slot}Data`;
     Reflect.set(el, slot, binding.fn);

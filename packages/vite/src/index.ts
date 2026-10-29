@@ -10,6 +10,7 @@ import {
 import { compile as compileWithJavaScript } from "@shadow-js/compiler/javascript";
 import type { Plugin } from "vite";
 import * as vite from "vite";
+import { moduleFile } from "./internal/ids";
 
 /**
  * Options of {@link shadow}. Every member is optional: the defaults compile a ShadowJS app for the
@@ -21,9 +22,10 @@ export interface ShadowPluginOptions {
   /**
    * Files to compile, matched against the module id without its query string. Plain `.ts` and `.js`
    * modules are compiled as well when they call `useStore`, whatever this is set to, so a
-   * single-value `useStore` there takes the cell path. Files that `exclude` matches are never compiled.
-   * @default /\.[cm]?[jt]sx$/ (every `.jsx` and `.tsx` file)
+   * single-value `useStore` there takes the cell path. Files that `exclude` matches are never compiled,
+   * and neither is a `?raw` or `?url` request (it is the file's text or address, not its source).
    * A `g` or `y` flag on the pattern is ignored: the pattern is matched from the start of every id.
+   * @default /\.[cm]?[jt]sx$/ (every `.jsx` and `.tsx` file)
    */
   include?: RegExp;
   /**
@@ -223,10 +225,9 @@ export function shadow(options: ShadowPluginOptions = {}): Plugin {
       };
     },
     transform(code, id, transformOptions) {
-      // A virtual module (Vite's \0 prefix) belongs to the plugin that made it.
-      if (id.startsWith("\0")) return null;
-      const file = id.split("?")[0] ?? id;
-      if (exclude.test(file)) return null;
+      // A virtual module (Vite's \0 prefix) and a `?raw` or `?url` request are not source to compile.
+      const { file, skip } = moduleFile(id);
+      if (skip || exclude.test(file)) return null;
       if (!include.test(file) && !(PLAIN_MODULE.test(file) && code.includes("useStore")))
         return null;
       const compileOptions: CompileOptions = {

@@ -243,6 +243,18 @@ export function checkClaimedText(
   devtoolsReport(DEVTOOLS_EVENT.HYDRATION_MISMATCH, detail, undefined, undefined);
 }
 
+/** HTML elements whose content is text and nothing else: no comment can mark a region inside them. */
+const TEXT_ONLY = new Set(["script", "style", "title", "textarea"]);
+
+/**
+ * True for a `script`, `style`, `title` or `textarea`, in whichever namespace the parser put it: `Dynamic` knows no
+ * parent, so the server writes the children of such a tag without region markers even where the page parses it as
+ * an SVG `title` or `style`. Its whole content is then the one region.
+ */
+function isTextOnly(node: Node): boolean {
+  return node.nodeType === 1 && TEXT_ONLY.has((node as Element).localName);
+}
+
 /**
  * Adopts the server content of the next region of a claimed parent while `hydrate()` runs: the nodes
  * that sat between the region's markers are put back before `anchorNode` and returned, so a custom
@@ -251,7 +263,8 @@ export function checkClaimedText(
  * @param parent An element returned by {@link claimElement} (or one of its descendants).
  * @param anchorNode The node the content goes before; `null` appends it at the end of `parent`.
  * @returns The adopted nodes; undefined when no hydration pass is running or `parent` has no region
- * left to adopt (the caller then inserts fresh nodes).
+ * left to adopt (the caller then inserts fresh nodes). A `script`, `style`, `title` or `textarea` has no
+ * markers (the server writes its text as the parser reads it): its current children are the region.
  * @example
  * import { takeRegion } from "@shadow-js/web/extend";
  *
@@ -269,7 +282,7 @@ export function takeRegion(parent: Node, anchorNode: Node | null): Node[] | unde
   const current = state;
   if (current === null) return undefined;
   const content = current.pending.get(parent)?.shift();
-  if (content === undefined) return undefined;
+  if (content === undefined) return isTextOnly(parent) ? Array.from(parent.childNodes) : undefined;
   for (const node of content) parent.insertBefore(node, anchorNode);
   return content;
 }

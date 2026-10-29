@@ -167,7 +167,9 @@ function isWellFormed(text: string): boolean {
 
 /** The options for the Rust compiler, or `null` when the JavaScript compiler must handle the call. */
 function plan(source: unknown, options: CompileOptions | undefined): RawOptions | null {
-  if (typeof source !== "string" || !isWellFormed(source)) return null;
+  if (typeof source !== "string" || !isWellFormed(source)) {
+    return null;
+  }
   if (options === undefined || options === null) {
     return {
       generate: "dom",

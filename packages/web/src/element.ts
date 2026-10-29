@@ -6,6 +6,7 @@ import { checkClaimedTag } from "./internal/claim";
 import { claims } from "./internal/hydration-hooks";
 import { nextKey } from "./internal/hydration-scope";
 import { ssrElement, ssrRaw } from "./server/element";
+import { isTextOnlyElement } from "./server/raw-text";
 
 /**
  * The slim element primitive: one HTML element with attributes, event listeners, `ref` and children,
@@ -95,9 +96,9 @@ export function element(tag: string, props: object): unknown {
       props,
       () => {
         const children = read["children"];
-        return children === undefined
-          ? undefined
-          : [ssrRaw("<!--[-->"), children, ssrRaw("<!--]-->")];
+        // The content of a style or a title is text the parser reads whole: no markers can go in it.
+        if (children === undefined || isTextOnlyElement(tag)) return children;
+        return [ssrRaw("<!--[-->"), children, ssrRaw("<!--]-->")];
       },
       true,
     );
@@ -129,7 +130,7 @@ export function element(tag: string, props: object): unknown {
     }
   }
   const ref = read["ref"];
-  if (typeof ref === "function") ref(el);
+  if (typeof ref === "function") untrack(() => ref(el));
   insert(el, () => read["children"]);
   return el;
 }

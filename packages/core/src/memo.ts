@@ -7,7 +7,8 @@ import { type Accessor, createComputation, type Equals, readComputation } from "
 export interface MemoOptions<T> {
   /**
    * Decides whether a recomputation changed the value: readers are notified only when it returns
-   * `false`. `false` always propagates.
+   * `false`. `false` always propagates. It runs untracked: a signal it reads is not a dependency of
+   * the memo or of the reader that pulled it.
    * @default Object.is
    */
   equals?: Equals<T>;
@@ -63,10 +64,10 @@ export function useMemo<T>(
   const node = createComputation({
     kind: "memo",
     fn: fn as (previous: never) => unknown,
-    equals: (options?.equals === undefined ? Object.is : options.equals) as Equals<unknown>,
-    lazy: options?.lazy === true,
-    allowWrites: options?.allowWrites === true,
-    ...(options?.name === undefined ? {} : { name: options.name }),
+    equals: options?.equals as Equals<unknown> | undefined,
+    lazy: options?.lazy,
+    allowWrites: options?.allowWrites,
+    name: options?.name,
   });
   return () => readComputation<T>(node);
 }

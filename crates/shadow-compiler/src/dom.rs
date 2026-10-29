@@ -11,6 +11,7 @@ use crate::error::{Result, fail_at};
 use crate::ir::{Attr, ChildIR, ComponentIR, ElementIR, ExprIR, Namespace, RootIR, StaticValue};
 use crate::jsutil::{json_string, utf16_len};
 use crate::names::{attribute_name, event_plan};
+use crate::registry::Registry;
 use crate::text::{escape_html_attribute, escape_html_text, property_key};
 use crate::tree::{NodeIx, Ty};
 
@@ -106,12 +107,19 @@ impl Block {
         }
     }
 
-    fn id(&mut self) -> String {
-        self.counter += 1;
-        if self.counter == 1 {
-            "_el$".to_string()
-        } else {
-            format!("_el${}", self.counter)
+    /// The next element variable. The block's expressions are the user's own text, so a name the
+    /// module already uses (`_el$` in code that was compiled before) is skipped instead of shadowed.
+    fn id(&mut self, reg: &Registry) -> String {
+        loop {
+            self.counter += 1;
+            let name = if self.counter == 1 {
+                "_el$".to_string()
+            } else {
+                format!("_el${}", self.counter)
+            };
+            if !reg.is_taken(&name) {
+                return name;
+            }
         }
     }
 }
@@ -218,53 +226,75 @@ impl<'t, 'a> Ctx<'t, 'a> {
         ))
     }
 
-    /// Wraps dynamic conditional tests in memos so a branch is only rebuilt when truthiness changes.
+    /// Wraps dynamic conditional tests in memos so a branch is only rebuilt when truthiness changes. A
+    /// chain `a ? x : b ? y : c ? z : w` is followed along its alternates with a loop, not recursion: its
+    /// length is the user's. The texts are generated in the order the recursive form had (every test,
+    /// then the end of the chain, then the branches from the last to the first), which fixes the order
+    /// helpers and templates are registered in.
     fn plan_conditional(
         &mut self,
         node: NodeIx,
         memos: &mut Vec<String>,
     ) -> Result<Option<String>> {
         let tree = self.tree;
-        let inner = unwrap_parens(tree, node);
-        match tree.node(inner).kind {
-            AstKind::ConditionalExpression(conditional) => {
-                let test = ix_of_expression(&conditional.test);
-                let consequent = ix_of_expression(&conditional.consequent);
-                let alternate = ix_of_expression(&conditional.alternate);
-                if !is_dynamic(tree, test, self.source)
-                    || !(contains_jsx(tree, consequent) || contains_jsx(tree, alternate))
+        let mut links: Vec<(String, NodeIx)> = Vec::new();
+        let mut tail: Option<String> = None;
+        let mut current = node;
+        loop {
+            let inner = unwrap_parens(tree, current);
+            match tree.node(inner).kind {
+                AstKind::ConditionalExpression(conditional) => {
+                    let test = ix_of_expression(&conditional.test);
+                    let consequent = ix_of_expression(&conditional.consequent);
+                    let alternate = ix_of_expression(&conditional.alternate);
+                    if is_dynamic(tree, test, self.source)
+                        && (contains_jsx(tree, consequent) || contains_jsx(tree, alternate))
+                    {
+                        let name = self.reg.memo_name(memos.len()).to_string();
+                        let memo = self.reg.helper("memo");
+                        let test_text = self.text(test)?;
+                        memos.push(format!("const {name} = {memo}(() => !!({test_text}));"));
+                        links.push((name, consequent));
+                        current = alternate;
+                        continue;
+                    }
+                }
+                AstKind::LogicalExpression(logical)
+                    if logical.operator == oxc_ast::ast::LogicalOperator::And =>
                 {
-                    return Ok(None);
+                    let left = ix_of_expression(&logical.left);
+                    let right = ix_of_expression(&logical.right);
+                    if is_dynamic(tree, left, self.source) && contains_jsx(tree, right) {
+                        let name = self.reg.memo_name(memos.len()).to_string();
+                        let memo = self.reg.helper("memo");
+                        let left_text = self.text(left)?;
+                        memos.push(format!("const {name} = {memo}(() => !!({left_text}));"));
+                        let right_text = self.text(right)?;
+                        tail = Some(format!("{name}() && {right_text}"));
+                    }
                 }
-                let name = conditional_name(memos.len());
-                let memo = self.reg.helper("memo");
-                let test_text = self.text(test)?;
-                memos.push(format!("const {name} = {memo}(() => !!({test_text}));"));
-                let nested = self.plan_conditional(alternate, memos)?;
-                let alt = match nested {
-                    Some(text) => text,
-                    None => self.text(alternate)?.into_owned(),
-                };
-                let consequent_text = self.text(consequent)?;
-                Ok(Some(format!("{name}() ? {consequent_text} : {alt}")))
+                _ => {}
             }
-            AstKind::LogicalExpression(logical)
-                if logical.operator == oxc_ast::ast::LogicalOperator::And =>
-            {
-                let left = ix_of_expression(&logical.left);
-                let right = ix_of_expression(&logical.right);
-                if !is_dynamic(tree, left, self.source) || !contains_jsx(tree, right) {
-                    return Ok(None);
-                }
-                let name = conditional_name(memos.len());
-                let memo = self.reg.helper("memo");
-                let left_text = self.text(left)?;
-                memos.push(format!("const {name} = {memo}(() => !!({left_text}));"));
-                let right_text = self.text(right)?;
-                Ok(Some(format!("{name}() && {right_text}")))
-            }
-            _ => Ok(None),
+            break;
         }
+        if links.is_empty() {
+            return Ok(tail);
+        }
+        // What ends the chain is not planned: its text is the source as written.
+        let tail = match tail {
+            Some(text) => text,
+            None => self.text(current)?.into_owned(),
+        };
+        // The branches are generated from the last to the first, but the text reads from the first to
+        // the last: the pieces are joined once, so a long chain is not copied once per link.
+        let mut pieces: Vec<String> = Vec::with_capacity(links.len() + 1);
+        for (name, consequent) in links.iter().rev() {
+            let consequent_text = self.text(*consequent)?;
+            pieces.push(format!("{name}() ? {consequent_text} : "));
+        }
+        pieces.reverse();
+        pieces.push(tail);
+        Ok(Some(pieces.concat()))
     }
 
     /// Value passed to `insert` for an expression child.
@@ -293,17 +323,20 @@ impl<'t, 'a> Ctx<'t, 'a> {
         }
     }
 
-    fn ref_statement(&self, text: &str, node: NodeIx, constant: bool) -> String {
+    fn ref_statement(&mut self, text: &str, node: NodeIx, constant: bool) -> String {
         let target = unwrap_parens(self.tree, node);
         let assignable =
             !constant && matches!(self.tree.ty(target), Ty::Identifier | Ty::MemberExpression);
+        // `text` is the user's expression and is read inside this method: its local must not be a
+        // name the module uses.
+        let local = self.reg.local("_ref$");
         if assignable {
             format!(
-                "ref(r$) {{\nconst _ref$ = {text};\ntypeof _ref$ === \"function\" ? _ref$(r$) : {text} = r$;\n}}"
+                "ref(r$) {{\nconst {local} = {text};\ntypeof {local} === \"function\" ? {local}(r$) : {text} = r$;\n}}"
             )
         } else {
             format!(
-                "ref(r$) {{\nconst _ref$ = {text};\ntypeof _ref$ === \"function\" && _ref$(r$);\n}}"
+                "ref(r$) {{\nconst {local} = {text};\ntypeof {local} === \"function\" && {local}(r$);\n}}"
             )
         }
     }
@@ -1041,20 +1074,20 @@ impl<'t, 'a> Ctx<'t, 'a> {
             if !needs_var.get(index).copied().unwrap_or(false) {
                 continue;
             }
-            let name = block.id();
+            let name = block.id(&self.reg);
             match node {
                 NodePlan::Element { name: slot, .. } => *slot = Some(name),
                 NodePlan::Text { names, cuts, .. } => {
                     names.push(name);
                     for _ in 0..cuts.len() {
-                        names.push(block.id());
+                        names.push(block.id(&self.reg));
                     }
                 }
             }
         }
         for slot in &mut slots {
             if slot.fresh {
-                slot.anchor_name = Some(block.id());
+                slot.anchor_name = Some(block.id(&self.reg));
             }
         }
 
@@ -1250,7 +1283,7 @@ impl<'t, 'a> Ctx<'t, 'a> {
     fn gen_element_root(&mut self, element: &ElementIR) -> Result<String> {
         let mut block = Block::new();
         let root_var = if element.dynamic_parts {
-            Some(block.id())
+            Some(block.id(&self.reg))
         } else {
             None
         };
@@ -1327,14 +1360,6 @@ fn push_plain(segments: &mut Vec<Segment>, entry: String) {
         entries.push(entry);
     } else {
         segments.push(Segment::Plain(vec![entry]));
-    }
-}
-
-fn conditional_name(index: usize) -> String {
-    if index == 0 {
-        "_c$".to_string()
-    } else {
-        format!("_c${}", index + 1)
     }
 }
 

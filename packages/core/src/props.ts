@@ -175,17 +175,19 @@ interface LiveState {
 }
 
 /**
- * A Proxy whose key set and values are recomputed on every access: `load` runs once per trap, so
- * a function source is called once per access. The target is an ordinary object, so prototype
- * lookups keep their usual meaning, and every write is refused because props are read-only.
- */
-/**
- * How deep the live reads are running, and the state each live view computed during the outermost
- * read. A view's traps read the views beneath it, and those read the views beneath them: without a
- * cache every trap recomputes each level below, and a few nested components (a chain of `{...props}`
- * forwards) take exponential time. Within one outermost read a view's state is computed once, so a
- * read costs time linear in the number of views. The cache is dropped when that read returns, so each
- * read still sees the current values.
+ * The cache of the live views: `readDepth` counts how deep the live reads are running and
+ * `readStates` holds the state each live view computed during the outermost read. A view's traps
+ * read the views beneath them, and those read the views beneath them: without a cache every trap
+ * recomputes each level below, and a few nested components (a chain of `{...props}` forwards) take
+ * exponential time. Within one outermost read a view's state is computed once, so a read costs time
+ * linear in the number of views. The cache is dropped when that read returns, so each read still
+ * sees the current values.
+ *
+ * These two are module-level scratch state (R-CODE-4, the scratch-array class), and not registers
+ * of `internal/state.ts`: this file may import only the public extension API (EXT-01), which has no
+ * place for them, and a new public export for two private counters is not worth it. They are safe
+ * because every write is undone in `finally` (`duringRead`), so a getter that throws leaves depth 0
+ * and an empty map, and because the map holds a view only while one outermost read is running.
  */
 let readDepth = 0;
 const readStates = new Map<object, LiveState>();
@@ -208,6 +210,11 @@ function duringRead<T>(run: () => T): T {
   }
 }
 
+/**
+ * A Proxy whose key set and values are recomputed on every access: `load` runs once per trap, so
+ * a function source is called once per access. The target is an ordinary object, so prototype
+ * lookups keep their usual meaning, and every write is refused because props are read-only.
+ */
 function liveView(load: () => LiveState): object {
   const target: object = {};
   return new Proxy(target, {

@@ -9,14 +9,17 @@ use crate::fxhash::FxHashSet;
 use oxc_ast::ast::ArrowFunctionBody;
 use oxc_ast::ast_kind::AstKind;
 
-use crate::error::{Result, unsupported};
+use crate::error::{Result, fail_span};
+use crate::fxhash::FxHashMap;
 use crate::ir::Namespace;
+use crate::lower::MAX_JSX_DEPTH;
 use crate::registry::Registry;
 use crate::tree::{NO_PARENT, NodeIx, Tree, Ty};
 
-/// How deep nested generation (JSX inside an expression inside JSX) may go before the input is handed
-/// to the reference compiler. Each level uses a few kilobytes of stack.
-const MAX_NESTING: u32 = 160;
+/// How deep nested generation (JSX inside an expression inside JSX) may go before the input is
+/// refused with `JSX_TOO_DEEP`: the depth that [`MAX_JSX_DEPTH`] allows inside one tree, and the reference
+/// compiler's limit across trees.
+const MAX_NESTING: u32 = MAX_JSX_DEPTH;
 
 /// A JSX root found in a program, with the node that holds it and the parentheses around it.
 #[derive(Debug, Clone, Copy)]
@@ -62,6 +65,12 @@ pub struct Ctx<'t, 'a> {
     /// `(() => {\n<body>\n})()`; see [`Ctx::block_body`].
     pub blocks: FxHashSet<String>,
     nesting: u32,
+    /// The generated code of every JSX root done so far, by root. A conditional child is read twice
+    /// (whole, then its test and branches for the memoized form), and every read generates the JSX
+    /// inside it again: without this a conditional nested n deep costs 2^n. Generating a root twice
+    /// registers nothing the first time did not (templates and helpers are deduplicated), so the output
+    /// is the same. The map lives for one compile and holds at most one entry per JSX node.
+    generated: FxHashMap<NodeIx, String>,
 }
 
 /// The settings of a module's compilation that do not depend on the tree.
@@ -95,6 +104,7 @@ impl<'t, 'a> Ctx<'t, 'a> {
             ssr: settings.ssr,
             blocks: FxHashSet::default(),
             nesting: 0,
+            generated: FxHashMap::default(),
         }
     }
 
@@ -216,12 +226,27 @@ impl<'t, 'a> Ctx<'t, 'a> {
     /// # Errors
     /// Fails when the JSX is invalid.
     pub fn generate(&mut self, jsx: NodeIx) -> Result<String> {
-        self.nesting += 1;
-        if self.nesting > MAX_NESTING {
-            return unsupported("JSX nested inside expressions of JSX is too deep");
+        if let Some(known) = self.generated.get(&jsx) {
+            return Ok(known.clone());
         }
-        let result = self.generate_inner(jsx);
+        // JSX inside an expression of JSX (`<a x={<b y={<c />} />} />`, `{ok && <b />}`) is generated while
+        // its parent is, so these calls nest on the stack: this bounds the trees inside each other, as
+        // `lower_jsx` bounds the depth of one tree.
+        self.nesting += 1;
+        let result = if self.nesting > MAX_NESTING {
+            fail_span(
+                "JSX_TOO_DEEP",
+                format!("JSX is nested more than {MAX_NESTING} levels deep inside expressions."),
+                self.tree.start(jsx),
+                self.tree.end(jsx),
+            )
+        } else {
+            self.generate_inner(jsx)
+        };
         self.nesting -= 1;
+        if let Ok(code) = &result {
+            self.generated.insert(jsx, code.clone());
+        }
         result
     }
 

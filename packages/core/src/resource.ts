@@ -248,8 +248,13 @@ export function useResource<S, T>(
   /** Applies a result unless a newer load or a dispose made it stale; says whether it applied. */
   const settle = (id: number, apply: () => void): boolean => {
     if (disposed || id !== version) return false;
-    batch(apply);
-    release();
+    // The flush that ends the batch throws what no handler took (a reader that failed): the boundary
+    // must be released regardless, or it would show its fallback forever.
+    try {
+      batch(apply);
+    } finally {
+      release();
+    }
     return true;
   };
 
@@ -360,6 +365,9 @@ export function useResource<S, T>(
     latest: { get: value },
     refetch: {
       value: (): Promise<T | undefined> => {
+        // A disposed resource has aborted its fetch and owns no controller any more: a new fetch would
+        // run unabortable and its result would be thrown away.
+        if (disposed) return Promise.resolve(undefined);
         const input = untrack(source);
         if (input === false || input === null || input === undefined)
           return Promise.resolve(undefined);
@@ -370,19 +378,25 @@ export function useResource<S, T>(
     mutate: {
       value: (next: T | ((previous: T | undefined) => T)): T => {
         let resolved: T | undefined;
-        batch(() => {
-          resolved =
-            typeof next === "function"
-              ? (next as (previous: T | undefined) => T)(untrack(value))
-              : next;
-          controller?.abort();
-          version += 1;
-          hasValue = true;
-          setValue(resolved as T);
-          setFailure(undefined);
-          setState("ready");
-        });
-        release();
+        // A throwing updater changes nothing, so the boundaries it holds stay held.
+        let changed = false;
+        try {
+          batch(() => {
+            resolved =
+              typeof next === "function"
+                ? untrack(() => (next as (previous: T | undefined) => T)(value()))
+                : next;
+            changed = true;
+            controller?.abort();
+            version += 1;
+            hasValue = true;
+            setValue(resolved as T);
+            setFailure(undefined);
+            setState("ready");
+          });
+        } finally {
+          if (changed) release();
+        }
         return resolved as T;
       },
     },

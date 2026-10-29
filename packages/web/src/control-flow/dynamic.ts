@@ -1,7 +1,8 @@
 import { mergeProps, splitProps, untrack, useMemo } from "@shadow-js/core";
 import { createComponent } from "../component";
-import { bindRegion, claims, createRegion, nextKey, SVG_NS } from "../extend";
+import { bindRegion, claims, createRegion, MATHML_NS, nextKey, SVG_NS, warnOnce } from "../extend";
 import { ssrElement, ssrRaw } from "../server/element";
+import { isTextOnlyElement } from "../server/raw-text";
 import { spread } from "../spread";
 
 /**
@@ -30,48 +31,71 @@ export interface DynamicProps<C extends DynamicTarget = DynamicTarget> {
   readonly [prop: string]: unknown;
 }
 
-/** Tag names that take the SVG namespace. Anything else is HTML. */
-const SVG_TAGS: ReadonlySet<string> = new Set([
-  "svg",
-  "g",
-  "path",
-  "circle",
-  "ellipse",
-  "line",
-  "polygon",
-  "polyline",
-  "rect",
-  "text",
-  "tspan",
-  "textpath",
-  "defs",
-  "use",
-  "symbol",
-  "marker",
-  "clippath",
-  "mask",
-  "pattern",
-  "lineargradient",
-  "radialgradient",
-  "stop",
-  "filter",
-]);
+/**
+ * The SVG element names (lowercase) HTML does not define: the names a tag takes the SVG namespace for. A pattern
+ * rather than a question to the platform because it answers the same in every DOM (browsers, happy-dom, jsdom,
+ * which has no interface per SVG element) and never parses HTML, so a page that enforces Trusted Types is never
+ * asked for a sink. `fe[bcdfgimopst]...` is every filter primitive (`feBlend` to `feTurbulence`).
+ */
+const SVG_PATTERN =
+  /^(svg|g|path|circle|ellipse|line|poly(gon|line)|rect|text(path)?|tspan|defs|desc|discard|metadata|use|symbol|marker|switch|view|set|mpath|image|stop|mask|pattern|clippath|filter|foreignobject|animate(motion|transform)?|(linear|radial)gradient|fe[bcdfgimopst][a-z]{3,})$/;
 
-/** Shape of a tag name: a letter, then letters, digits or dashes. Anything else is refused. */
-const TAG_PATTERN = /^[a-z][a-z0-9-]*$/i;
+/** The MathML element names (the HTML spec's list), matched in lowercase. None of them is an HTML element. */
+const MATHML_TAGS =
+  /^(m(ath|[ion]|s(ub(sup)?|up|qrt|pace|tyle)?|t(ext|able|[rd])|row|frac|root|error|padded|phantom|enclose|under(over)?|over|(multi|pre)scripts|labeledtr|action)|none|semantics|annotation(-xml)?)$/;
 
-/** Tags refused in any letter case: a script would bypass CSP nonces and Trusted Types. */
-const DENIED_TAGS: ReadonlySet<string> = new Set(["script"]);
+/**
+ * Shape of a tag name: a letter, then letters, digits or dashes. Anything else is refused, and so is `script` in
+ * any letter case: it would bypass CSP nonces and Trusted Types.
+ */
+const TAG_PATTERN = /^(?!script$)[a-z][a-z0-9-]*$/i;
+
+/**
+ * Warns (development only) about an SVG element name written in a case SVG does not spell it in: the namespace
+ * is case-sensitive, so a `clippath` element is not the `clipPath` that `clip-path="url(#...)"`, CSS and
+ * `querySelector` mean. Warns once per name. The table of canonical names exists only behind `__DEV__`.
+ */
+function warnSvgCase(tag: string, lower: string): void {
+  const canonical =
+    "animateMotion animateTransform clipPath feBlend feColorMatrix feComponentTransfer feComposite feConvolveMatrix feDiffuseLighting feDisplacementMap feDistantLight feDropShadow feFlood feFuncA feFuncB feFuncG feFuncR feGaussianBlur feImage feMerge feMergeNode feMorphology feOffset fePointLight feSpecularLighting feSpotLight feTile feTurbulence foreignObject linearGradient radialGradient textPath"
+      .split(" ")
+      .find((name) => name.toLowerCase() === lower);
+  if (canonical === undefined || canonical === tag) return;
+  warnOnce(
+    "DYNAMIC_SVG_CASE",
+    `Dynamic created the SVG element "${tag}" with the name as written, but SVG spells it "${canonical}": the name is case-sensitive, so "${tag}" is not the element SVG defines. Write "${canonical}".`,
+    lower,
+  );
+}
+
+/**
+ * Creates the element of a validated tag name in its namespace. MathML names are exact (none of them is an
+ * HTML element). For the rest the platform answers first: a name HTML knows (`div`, `a`, `style`, `title`, a
+ * custom element) is an HTML element, which is all the common tags cost; only a name HTML does not know is
+ * matched against the SVG names, and it keeps the spelling the caller wrote.
+ */
+function createTagged(tag: string): Element {
+  const lower = tag.toLowerCase();
+  if (MATHML_TAGS.test(lower)) return document.createElementNS(MATHML_NS, lower);
+  const el = document.createElement(tag);
+  // Firefox makes `image` a plain HTMLElement, where Chromium and WebKit call it unknown: it is no HTML element
+  // (the parser turns it into `img`), and SVG defines it, so it takes the SVG route in every engine.
+  if ((el.constructor !== HTMLUnknownElement && lower !== "image") || !SVG_PATTERN.test(lower)) {
+    return el;
+  }
+  if (__DEV__) warnSvgCase(tag, lower);
+  return document.createElementNS(SVG_NS, tag);
+}
 
 /**
  * Creates an element for a validated tag name and applies the props to it, children included.
- * The namespace comes from the tag: SVG-only names get the SVG namespace, the rest are HTML.
+ * The namespace comes from the tag: SVG-only names get the SVG namespace (named as written), MathML names the
+ * MathML namespace, the rest are HTML.
  * On the server it renders the element as markup (with the hydration key and the children region
  * the client adopts); while hydrating it claims that element instead of creating one.
  */
 function buildElement(tag: string, props: object): unknown {
-  const lower = tag.toLowerCase();
-  if (!TAG_PATTERN.test(tag) || DENIED_TAGS.has(lower)) {
+  if (!TAG_PATTERN.test(tag)) {
     throw new TypeError(__DEV__ ? "ShadowJS Dynamic: invalid tag" : "SHADOW_DYNAMIC_TAG");
   }
   if (__SERVER__) {
@@ -83,18 +107,16 @@ function buildElement(tag: string, props: object): unknown {
       props,
       () => {
         const { children } = props as { children?: unknown };
-        return children === undefined
-          ? undefined
-          : [ssrRaw("<!--[-->"), children, ssrRaw("<!--]-->")];
+        // The content of a style or a title is text the parser reads whole: no markers can go in it.
+        if (children === undefined || isTextOnlyElement(tag)) return children;
+        return [ssrRaw("<!--[-->"), children, ssrRaw("<!--]-->")];
       },
       true,
     );
   }
-  const svg = SVG_TAGS.has(lower);
-  const claimed = claims.current.claimElement(nextKey());
-  const el = claimed ?? (svg ? document.createElementNS(SVG_NS, tag) : document.createElement(tag));
+  const el = claims.current.claimElement(nextKey()) ?? createTagged(tag);
   // Attributes through spread; children through insert, which adopts the server's children region.
-  spread(el, props, svg, true);
+  spread(el, props, el.namespaceURI === SVG_NS, true);
   const region = createRegion(el, null, claims.current.takeRegion(el, null));
   bindRegion(region, () => (props as { children?: unknown }).children);
   return el;
@@ -125,8 +147,17 @@ function buildTarget(target: unknown, props: object): unknown {
  * `component` renders nothing.
  *
  * Tag names are checked against `^[a-z][a-z0-9-]*$` (case-insensitive) and `script` is refused, so
- * data-driven tags cannot inject markup. SVG-only names (`circle`, `path`, `svg`, ...) are created
- * in the SVG namespace.
+ * data-driven tags cannot inject markup. The browser decides the namespace: a name HTML knows (`div`,
+ * `a`, `style`, `title`, a custom element) is an HTML element, in any letter case. A name HTML does not
+ * know and that SVG defines (`circle`, `path`, `svg`, `image`, `foreignObject`, `clipPath`, the `fe*` filter
+ * primitives, the gradients and animation elements, ...) is created in the SVG namespace, matched against a
+ * name pattern (no HTML is parsed, so Trusted Types is never involved); any other name stays an HTML element.
+ * The element keeps the name exactly as written: `Dynamic` does not derive the canonical case, which SVG
+ * needs (`clipPath`, `linearGradient`, `feGaussianBlur`, `foreignObject`, ...), so write those names as SVG
+ * spells them. Development builds warn once per name with `DYNAMIC_SVG_CASE` when they are not.
+ * MathML names (`math`, `mi`, `mfrac`, `semantics`, `annotation-xml`, ...) are created in the MathML
+ * namespace, in lowercase. `title`, `style` and `a` stay HTML elements: `Dynamic` does not know the parent
+ * the element will be inserted into.
  *
  * @param props `component` and the props of what it renders.
  * @returns An accessor of the rendered output, to be inserted by the caller.
