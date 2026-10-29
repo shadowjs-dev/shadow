@@ -45,9 +45,7 @@ function inNamespace(source: Element, namespace: string): Element {
   const root = copyOf(source);
   const stack: Array<[Element, Element]> = [[source, root]];
   while (stack.length > 0) {
-    const pair = stack.pop();
-    if (pair === undefined) break;
-    const [from, to] = pair;
+    const [from, to] = stack.pop() as [Element, Element];
     for (const child of Array.from(from.childNodes)) {
       if (child instanceof Element) {
         const copy = copyOf(child);

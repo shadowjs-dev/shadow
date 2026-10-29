@@ -94,7 +94,8 @@ function commit(el: Element, namespace: string | null, qualified: string, value:
   if (/^on./.test(lowerName)) return;
   if (__DEV__ && lowerName === "srcdoc") warnOnce("SRCDOC_DYNAMIC", SRCDOC_DYNAMIC_DETAIL);
   if (isUnsafeUrlAttribute(lowerName, text)) {
-    warnOnce("UNSAFE_URL_BLOCKED", `Blocked a script URL in the "${qualified}" attribute.`);
+    if (__DEV__)
+      warnOnce("UNSAFE_URL_BLOCKED", `Blocked a script URL in the "${qualified}" attribute.`);
     return;
   }
   if (namespace === null) {

@@ -1,10 +1,4 @@
-import {
-  createSignalNode,
-  isTracking,
-  notify as notifySource,
-  type SignalNode,
-  track,
-} from "../extend";
+import { isTracking, notify as notifySource, SignalNode, track } from "../extend";
 
 /** Keys that could reach `Object.prototype` if written; they are never stored as own properties. */
 const RESERVED_KEYS: ReadonlySet<string> = new Set(["__proto__", "constructor", "prototype"]);
@@ -152,7 +146,7 @@ function signalFor(node: NodeState, key: string): SignalNode<number> {
         if ((node.observers?.length ?? 0) === 0) signals.delete(other);
       }
     }
-    signal = createSignalNode(0, false);
+    signal = new SignalNode(0, false);
     signals.set(key, signal);
   }
   return signal;
@@ -167,7 +161,7 @@ export function trackProperty(node: NodeState, key: string): void {
 /** Subscribes the running computation (if any) to the key set of the object. */
 export function trackKeys(node: NodeState): void {
   if (!isTracking()) return;
-  if (node.keys === null) node.keys = createSignalNode(0, false);
+  if (node.keys === null) node.keys = new SignalNode(0, false);
   track(node.keys);
 }
 

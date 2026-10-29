@@ -1,6 +1,6 @@
 import { nextKey } from "../internal/hydration-scope";
-import { attributeName, IGNORED_KEYS } from "../internal/react-names";
-import { BOOLEAN_ATTRIBUTES, isEventName, ssrAttribute } from "./attributes";
+import { attributeName, IGNORED_KEYS, isFlagAttribute } from "../internal/react-names";
+import { isEventName, ssrAttribute } from "./attributes";
 import { classText, ssrStyle, styleText } from "./class-style";
 import { invalid } from "./errors";
 // biome-ignore lint/suspicious/noShadowRestrictedNames: the name "escape" is part of the compiler contract (SSR output).
@@ -177,7 +177,7 @@ export function ssrElement(
   let innerHtml: string | undefined;
   if (props !== null && typeof props === "object") {
     for (const key of Object.keys(props)) {
-      if (SKIPPED_KEYS.has(key) || IGNORED_KEYS.has(key)) continue;
+      if (SKIPPED_KEYS.has(key) || IGNORED_KEYS.test(key)) continue;
       if (
         key === "ref" ||
         key.startsWith("on:") ||
@@ -216,10 +216,7 @@ export function ssrElement(
           attributes += ssrAttribute(name, value, name === "checked");
       } else {
         const name = attributeName(key, svg);
-        // `hidden="until-found"` is a keyword, not a flag: a bare `hidden` would hide what it should only collapse.
-        const flag =
-          BOOLEAN_ATTRIBUTES.has(name) && !(name === "hidden" && value === "until-found");
-        attributes += ssrAttribute(name, value, flag);
+        attributes += ssrAttribute(name, value, isFlagAttribute(name, value));
       }
     }
   }
@@ -235,8 +232,12 @@ export function ssrElement(
   if (innerHtml === undefined && (hasValue || hasFallback)) {
     const value = hasValue ? control.value : control.fallback;
     content = isTextarea ? textareaContent(value) : markSelectedOptions(value, content);
-  } else if (isTextarea && innerHtml === undefined) {
-    // The children of a textarea are its value (as on the client): keep a first line break the parser drops.
+  } else if (
+    (isTextarea || lowerTag === "pre" || lowerTag === "listing") &&
+    innerHtml === undefined
+  ) {
+    // The parser drops one line break right after these start tags (a textarea's children are its
+    // value, as on the client): write one more so the content is read as it was given.
     content = keepLeadingNewline(content);
   }
   return new SsrNode(`<${tag}${attributes}>${content}</${tag}>`);

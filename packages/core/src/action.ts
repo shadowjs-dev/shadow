@@ -62,21 +62,27 @@ export function useAction<S, A extends unknown[]>(
       });
     };
     const fail = (error: unknown): void => {
-      if (id !== latest) return;
-      setPending(false);
+      // A stale dispatch changes no state, but its error is still the owner's to hear.
+      if (id === latest) setPending(false);
       if (owner === null) throw error;
-      handleError(error, owner);
+      try {
+        handleError(error, owner);
+      } catch (uncaught) {
+        // No handler took it: report it, as documented, instead of throwing out of dispatch.
+        if (typeof reportError === "function") reportError(uncaught);
+        else queueMicrotask(() => Promise.reject(uncaught));
+      }
     };
     let result: S | PromiseLike<S>;
     try {
       result = untrack(() => action(previous, ...args));
     } catch (error) {
-      if (owner === null) {
-        // `fail` would rethrow synchronously; without an owner the promise carries the error.
-        if (id === latest) setPending(false);
-        return Promise.reject(error);
+      try {
+        fail(error);
+      } catch (thrown) {
+        // Without an owner the returned promise carries the error.
+        return Promise.reject(thrown);
       }
-      fail(error);
       return Promise.resolve();
     }
     if (!isPromiseLike<S>(result)) {

@@ -1,5 +1,5 @@
 import { type Accessor, type Context, createContext, onCleanup, useContext } from "@shadow-js/core";
-import { createSignalNode, readSignal, writeSignal } from "@shadow-js/core/extend";
+import { readSignal, SignalNode, writeSignal } from "@shadow-js/core/extend";
 
 /** What a `<Suspense>` inside a list learns about its place: when to show content and a fallback. @internal */
 export interface SuspenseListSlot {
@@ -82,7 +82,7 @@ export interface SuspenseListProps {
  */
 export function SuspenseList(props: SuspenseListProps): Accessor<unknown> {
   // The set of boundaries changes as they are created and disposed; `changes` tells readers.
-  const changes = createSignalNode<number>(0, false);
+  const changes = new SignalNode<number>(0, false);
   const slots: Array<{ readonly ready: () => boolean }> = [];
   const touch = (): void => {
     writeSignal(changes, 0, { allowInMemo: true });

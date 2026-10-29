@@ -119,3 +119,38 @@ export function eventPlan(attribute: string, tag: string, type: string | null): 
   if (lower === "wheel") return { type: "wheel", capture, passive: !capture };
   return { type: lower, capture, passive: false };
 }
+
+/**
+ * The event names (without `on`) of the HTML event handler content attributes, plus the spellings React
+ * adds. An attribute `on` + one of these, in any case, is an event handler and cannot be given a string.
+ */
+const HANDLER_EVENTS: ReadonlySet<string> = new Set(
+  (
+    "abort afterprint animationcancel animationend animationiteration animationstart auxclick " +
+    "beforeinput beforematch beforeprint beforetoggle beforeunload blur cancel canplay canplaythrough " +
+    "change click close command contextlost contextmenu contextrestored copy cuechange cut dblclick " +
+    "doubleclick drag dragend dragenter dragexit dragleave dragover dragstart drop durationchange " +
+    "emptied ended error focus focusin focusout formdata gotpointercapture hashchange input invalid " +
+    "keydown keypress keyup languagechange load loadeddata loadedmetadata loadend loadstart " +
+    "lostpointercapture message messageerror mousedown mouseenter mouseleave mousemove mouseout " +
+    "mouseover mouseup offline online pagehide pageshow paste pause play playing pointercancel " +
+    "pointerdown pointerenter pointerleave pointermove pointerout pointerover pointerup popstate " +
+    "progress ratechange rejectionhandled reset resize scroll scrollend securitypolicyviolation " +
+    "seeked seeking select selectionchange slotchange stalled storage submit suspend timeupdate " +
+    "toggle touchcancel touchend touchmove touchstart transitioncancel transitionend transitionrun " +
+    "transitionstart unhandledrejection unload volumechange waiting wheel"
+  ).split(" "),
+);
+
+/**
+ * True for an attribute name that is an event handler content attribute under any capitalization
+ * (`onclick`, `ONCLICK`, `onClick`, and React's `onClickCapture`). A name that only starts with `on`
+ * (`online`, `onboarding`) is not one.
+ */
+export function isEventHandlerAttribute(name: string): boolean {
+  const lower = name.toLowerCase();
+  if (!lower.startsWith("on")) return false;
+  const event = lower.slice(2);
+  if (HANDLER_EVENTS.has(event)) return true;
+  return event.endsWith("capture") && HANDLER_EVENTS.has(event.slice(0, -"capture".length));
+}

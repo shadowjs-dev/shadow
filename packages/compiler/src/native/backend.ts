@@ -103,26 +103,31 @@ export function loadNative(): Attempt {
   if (explicit !== undefined && explicit !== "") {
     candidates.push({ label: explicit, load: () => requireNode(explicit) as AddonModule });
   }
+  // The explicit file comes first and does not depend on the platform: a platform without a prebuilt
+  // addon is exactly where a self-built one is pointed at.
   const key = platformKey();
   if (key === null) {
-    return {
-      ok: false,
-      reason: `no prebuilt addon exists for ${process.platform}-${process.arch}`,
-      missing: true,
-    };
-  }
-  const packageName = `@shadow-js/compiler-${key}`;
-  candidates.push({ label: packageName, load: () => requireNode(packageName) as AddonModule });
-  let root: string | undefined;
-  try {
-    root = packageRoot();
-  } catch {
-    root = undefined;
-  }
-  if (root !== undefined) {
-    const local = join(root, "npm", key, "shadow-compiler.node");
-    if (existsSync(local)) {
-      candidates.push({ label: local, load: () => requireNode(local) as AddonModule });
+    if (candidates.length === 0) {
+      return {
+        ok: false,
+        reason: `no prebuilt addon exists for ${process.platform}-${process.arch}`,
+        missing: true,
+      };
+    }
+  } else {
+    const packageName = `@shadow-js/compiler-${key}`;
+    candidates.push({ label: packageName, load: () => requireNode(packageName) as AddonModule });
+    let root: string | undefined;
+    try {
+      root = packageRoot();
+    } catch {
+      root = undefined;
+    }
+    if (root !== undefined) {
+      const local = join(root, "npm", key, "shadow-compiler.node");
+      if (existsSync(local)) {
+        candidates.push({ label: local, load: () => requireNode(local) as AddonModule });
+      }
     }
   }
   for (const candidate of candidates) {

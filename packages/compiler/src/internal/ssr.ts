@@ -1,9 +1,9 @@
 import { containsJsx } from "./classify";
 import { CompileError, codeFrame, makeDiagnostic } from "./diagnostics";
-import { type DomContext, wrapObjectLiteral } from "./dom";
+import { type DomContext, isConstantRef, refStatement, wrapObjectLiteral } from "./dom";
 import type { AttrIR, ChildIR, ComponentIR, ElementIR, ExprIR, RootIR } from "./ir";
 import { escapeHtmlAttribute, escapeHtmlText, propertyKey } from "./jsx-text";
-import { attributeName } from "./react-names";
+import { attributeName, isEventHandlerAttribute } from "./react-names";
 
 /** Properties written as plain attributes on the server (the client sets them as DOM properties). */
 const BOOLEAN_PROPERTIES = new Set([
@@ -140,57 +140,130 @@ function classSources(el: ElementIR): { statics: string[]; dynamic: string[] } {
   return { statics, dynamic };
 }
 
-/** Runtime props for an element or component that needs `mergeProps`/`ssrElement` semantics. */
-function propsObject(d: DomContext, attrs: AttrIR[]): string {
-  const segments: string[][] = [[]];
-  const current = (): string[] => segments[segments.length - 1] as string[];
+/** One piece of a props object: a spread, or the entries between spreads. */
+type PropsPiece = { spread: string } | { entries: string[] };
+
+/** True for a name the server never writes on an element: handlers, `ref` and the directives for the client. */
+function clientOnly(name: string): boolean {
+  return (
+    name === "ref" ||
+    isEventName(name) ||
+    name.startsWith("on:") ||
+    name.startsWith("use:") ||
+    name.startsWith("prop:")
+  );
+}
+
+/**
+ * Runtime props for a component, or for an element with a spread (`component` false), that need
+ * `mergeProps`/`ssrElement` semantics. A component gets every prop the client gives it, handlers and
+ * `ref` included. An element gets none of those (the server writes no handler), and its `class:` and
+ * `style:` directives become the last `classList` and `style` entries, because they apply after the
+ * spread. The plain `classList` and `style` props of that element move into those entries so that no
+ * source is lost; a `style` or `classList` that a spread supplies is replaced by them.
+ */
+function propsObject(d: DomContext, attrs: AttrIR[], component: boolean): string {
+  const pieces: PropsPiece[] = [];
+  const entries = (): string[] => {
+    const last = pieces[pieces.length - 1];
+    if (last !== undefined && "entries" in last) return last.entries;
+    const fresh: string[] = [];
+    pieces.push({ entries: fresh });
+    return fresh;
+  };
+  const hasStyleDirective =
+    !component && attrs.some((a) => a.kind === "expr" && a.name.startsWith("style:"));
+  const hasClassDirective =
+    !component && attrs.some((a) => a.kind === "expr" && a.name.startsWith("class:"));
+  const styleSources: string[] = [];
+  const classMembers: string[] = [];
+  let classListSource: string | null = null;
+  let dynamicDirectives = false;
+  const noteDynamic = (expr: ExprIR): void => {
+    dynamicDirectives ||= expr.dynamic || containsJsx(expr.node);
+  };
   for (const attr of attrs) {
     if (attr.kind === "spread") {
-      segments.push(
-        [
-          `...${attr.expr.dynamic ? `() => ${wrapObjectLiteral(attr.expr.text, attr.expr.node)}` : attr.expr.text}`,
-        ],
-        [],
-      );
+      pieces.push({
+        spread: attr.expr.dynamic
+          ? `() => ${wrapObjectLiteral(attr.expr.text, attr.expr.node)}`
+          : attr.expr.text,
+      });
     } else if (attr.kind === "static") {
-      current().push(
+      if (hasStyleDirective && attr.name === "style" && typeof attr.value === "string") {
+        styleSources.push(JSON.stringify(attr.value));
+        continue;
+      }
+      entries().push(
         `${propertyKey(attr.name)}: ${attr.value === true ? "true" : (attr.js ?? JSON.stringify(attr.value))}`,
       );
-    } else if (
-      attr.name !== "ref" &&
-      !isEventName(attr.name) &&
-      (attr.expr.dynamic || containsJsx(attr.expr.node))
-    ) {
-      current().push(`get ${propertyKey(attr.name)}() {\nreturn ${attr.expr.text};\n}`);
-    } else if (attr.name !== "ref" && !isEventName(attr.name)) {
-      current().push(`${propertyKey(attr.name)}: ${attr.expr.text}`);
+    } else if (!component && clientOnly(attr.name)) {
+      // Nothing of it reaches the markup.
+    } else if (!component && attr.name.startsWith("class:")) {
+      classMembers.push(`${JSON.stringify(attr.name.slice(6))}: ${attr.expr.text}`);
+      noteDynamic(attr.expr);
+    } else if (!component && attr.name.startsWith("style:")) {
+      styleSources.push(`{ ${JSON.stringify(attr.name.slice(6))}: ${attr.expr.text} }`);
+      noteDynamic(attr.expr);
+    } else if (hasStyleDirective && attr.name === "style") {
+      styleSources.push(attr.expr.text);
+      noteDynamic(attr.expr);
+    } else if (hasClassDirective && attr.name === "classList") {
+      classListSource = attr.expr.text;
+      noteDynamic(attr.expr);
+    } else if (attr.name === "ref") {
+      entries().push(
+        refStatement(d, attr.expr.text, attr.expr.node, isConstantRef(d, attr.expr.node)),
+      );
+    } else if (attr.expr.dynamic || containsJsx(attr.expr.node)) {
+      entries().push(`get ${propertyKey(attr.name)}() {\nreturn ${attr.expr.text};\n}`);
+    } else {
+      entries().push(`${propertyKey(attr.name)}: ${attr.expr.text}`);
     }
   }
-  const pieces: string[] = [];
-  for (const segment of segments) {
-    if (segment.length === 0) continue;
-    if (segment.length === 1 && (segment[0] as string).startsWith("..."))
-      pieces.push((segment[0] as string).slice(3));
-    else pieces.push(`{\n${segment.join(",\n")}\n}`);
+  const folded = (key: string, value: string): string =>
+    dynamicDirectives ? `get ${key}() {\nreturn ${value};\n}` : `${key}: ${value}`;
+  if (hasClassDirective) {
+    const spreadOld = classListSource === null ? "" : `...(${classListSource}), `;
+    pieces.push({ entries: [folded("classList", `{ ${spreadOld}${classMembers.join(", ")} }`)] });
   }
-  if (pieces.length === 0) return "{}";
+  if (hasStyleDirective) {
+    const last = pieces[pieces.length - 1];
+    const entry = folded("style", `[${styleSources.join(", ")}]`);
+    if (hasClassDirective && last !== undefined && "entries" in last) last.entries.push(entry);
+    else pieces.push({ entries: [entry] });
+  }
+  const texts = pieces
+    .filter((piece) => "spread" in piece || piece.entries.length > 0)
+    .map((piece) => ("spread" in piece ? piece.spread : `{\n${piece.entries.join(",\n")}\n}`));
+  if (texts.length === 0) return "{}";
   // A lone dynamic spread is an accessor of the props: mergeProps turns it into a props object.
-  if (pieces.length === 1 && !(pieces[0] as string).startsWith("() =>")) return pieces[0] as string;
-  return `${d.reg.helper("mergeProps")}(${pieces.join(", ")})`;
+  if (texts.length === 1 && !(texts[0] as string).startsWith("() =>")) return texts[0] as string;
+  return `${d.reg.helper("mergeProps")}(${texts.join(", ")})`;
+}
+
+/** The `style` sources of an element: its static string first, then each `style` and `style:` in order. */
+function styleSources(el: ElementIR): { statics: string[]; dynamic: string[] } {
+  const statics: string[] = [];
+  const dynamic: string[] = [];
+  for (const attr of el.attrs) {
+    if (attr.kind === "static" && attr.name === "style" && typeof attr.value === "string") {
+      statics.push(attr.value);
+    } else if (attr.kind === "expr" && attr.name === "style") {
+      dynamic.push(attr.expr.text);
+    } else if (attr.kind === "expr" && attr.name.startsWith("style:")) {
+      dynamic.push(`{ ${JSON.stringify(attr.name.slice(6))}: ${attr.expr.text} }`);
+    }
+  }
+  return { statics, dynamic };
 }
 
 function serializeAttrs(d: DomContext, el: ElementIR, parts: Parts): void {
   const svg = el.ns === "svg";
   const classes = classSources(el);
+  const styles = styleSources(el);
   let classDone = false;
   let styleDone = false;
-  const styleSources: string[] = [];
-  for (const attr of el.attrs) {
-    if (attr.kind !== "expr") continue;
-    if (attr.name === "style") styleSources.push(attr.expr.text);
-    else if (attr.name.startsWith("style:"))
-      styleSources.push(`{ ${JSON.stringify(attr.name.slice(6))}: ${attr.expr.text} }`);
-  }
   const emitClass = (): void => {
     if (classDone) return;
     classDone = true;
@@ -203,13 +276,31 @@ function serializeAttrs(d: DomContext, el: ElementIR, parts: Parts): void {
     const items = [...classes.statics.map((s) => JSON.stringify(s)), ...classes.dynamic];
     parts.hole(`${d.reg.helper("ssrClass")}([${items.join(", ")}])`);
   };
+  // A static style with no dynamic one stays markup; otherwise every source is one `ssrStyle`, so the
+  // element never has two `style` attributes (the static string comes first, later declarations win).
+  const emitStyle = (): void => {
+    if (styleDone) return;
+    styleDone = true;
+    if (styles.dynamic.length === 0) {
+      if (styles.statics.length > 0) {
+        parts.text(` style="${escapeHtmlAttribute(styles.statics.join(";"))}"`);
+      }
+      return;
+    }
+    const items = [...styles.statics.map((s) => JSON.stringify(s)), ...styles.dynamic];
+    parts.hole(`${d.reg.helper("ssrStyle")}([${items.join(", ")}])`);
+  };
   for (const attr of el.attrs) {
     if (attr.kind === "static") {
       if (attr.name === "class" || attr.name === "className") {
         emitClass();
         continue;
       }
-      if (isEventName(attr.name) && typeof attr.value === "string") {
+      if (attr.name === "style" && typeof attr.value === "string") {
+        emitStyle();
+        continue;
+      }
+      if (isEventHandlerAttribute(attr.name) && typeof attr.value === "string") {
         fail(
           d,
           "STRING_EVENT_HANDLER",
@@ -243,10 +334,7 @@ function serializeAttrs(d: DomContext, el: ElementIR, parts: Parts): void {
       continue;
     }
     if (name === "style" || name.startsWith("style:")) {
-      if (!styleDone) {
-        styleDone = true;
-        parts.hole(`${d.reg.helper("ssrStyle")}([${styleSources.join(", ")}])`);
-      }
+      emitStyle();
       continue;
     }
     if (name === "innerHTML" || SKIPPED_PROPERTIES.has(name)) continue;
@@ -359,7 +447,7 @@ function serializeElement(d: DomContext, el: ElementIR, parts: Parts, root: bool
     // The SVG flag is passed only for SVG elements, so HTML output stays as it was.
     const svgFlag = el.ns === "svg" ? ", true" : "";
     parts.hole(
-      `${d.reg.helper("ssrElement")}(${JSON.stringify(el.tag)}, ${propsObject(d, el.attrs)}, ${childCode}, ${hydratable && root}${svgFlag})`,
+      `${d.reg.helper("ssrElement")}(${JSON.stringify(el.tag)}, ${propsObject(d, el.attrs, false)}, ${childCode}, ${hydratable && root}${svgFlag})`,
     );
     return;
   }
@@ -406,7 +494,7 @@ function genComponent(d: DomContext, c: ComponentIR): string {
 }
 
 function componentProps(d: DomContext, c: ComponentIR): string {
-  const base = propsObject(d, c.attrs);
+  const base = propsObject(d, c.attrs, true);
   if (c.children.length === 0) return base;
   const only = c.children.length === 1 ? c.children[0] : undefined;
   let value: string;

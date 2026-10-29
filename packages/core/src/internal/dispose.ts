@@ -36,7 +36,15 @@ export function disposeTree(root: Owner): void {
     failed = true;
     failure = error;
   }
-  if (rt.running === null && rt.batchDepth === 0 && !rt.flushing && hasPending()) {
+  // Only the outermost disposal flushes: a nested one (a cleanup disposing another owner) would run
+  // effects while the tree it sits in is half torn down.
+  if (
+    rt.running === null &&
+    rt.batchDepth === 0 &&
+    rt.disposing === 0 &&
+    !rt.flushing &&
+    hasPending()
+  ) {
     try {
       flush();
     } catch (error) {

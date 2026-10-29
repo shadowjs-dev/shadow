@@ -1,6 +1,6 @@
 import { decodeHTMLStrict } from "entities";
 import { type AstNode, isJsx, isNode, unwrapParens } from "./ast";
-import { constantValue, isDynamic } from "./classify";
+import { constantValue, containsJsx, isDynamic } from "./classify";
 import { CompileError, codeFrame, makeDiagnostic } from "./diagnostics";
 import type {
   AttrIR,
@@ -14,7 +14,7 @@ import type {
   SlotIR,
 } from "./ir";
 import { cleanJsxText } from "./jsx-text";
-import { nestingProblem, selfNestingProblem } from "./nesting";
+import { ancestorProblem, nestingProblem, selfNestingProblem } from "./nesting";
 import { attributeName, IGNORED_ATTRIBUTES } from "./react-names";
 
 /** JSX nesting deeper than this is rejected (R-CODE-12): it is never legitimate source. */
@@ -23,8 +23,17 @@ export const MAX_JSX_DEPTH = 400;
 export interface LowerContext {
   source: string;
   id: string;
-  /** Final text of an expression node with nested JSX compiled. */
-  text(node: AstNode): string;
+  /**
+   * Final text of an expression node with nested JSX compiled. `ns` is the namespace of the element the
+   * expression sits in: JSX inside it is built in that namespace (`html` when omitted).
+   */
+  text(node: AstNode, ns?: Namespace): string;
+  /**
+   * Called for an expression that the generated code puts in a getter or a method of a props object
+   * (`get title() { ... }`), where `this` and `arguments` would be the object's: the subtree's uses of
+   * them are read from locals that the root's code defines, and `super` is refused.
+   */
+  capture(node: AstNode): void;
 }
 
 function fail(ctx: LowerContext, code: string, message: string, node: AstNode): never {
@@ -112,8 +121,8 @@ const SVG_ONLY_TAGS = new Set([
   "view",
 ]);
 
-function expr(ctx: LowerContext, node: AstNode): ExprIR {
-  return { text: ctx.text(node), node, dynamic: isDynamic(node, ctx.source) };
+function expr(ctx: LowerContext, node: AstNode, ns: Namespace): ExprIR {
+  return { text: ctx.text(node, ns), node, dynamic: isDynamic(node, ctx.source) };
 }
 
 interface TagInfo {
@@ -279,6 +288,8 @@ function innerHtmlAttr(
   value: AstNode | null,
   tag: string,
   attribute: AstNode,
+  ns: Namespace,
+  risk: boolean,
 ): AttrIR {
   const inner =
     value === null
@@ -289,6 +300,7 @@ function innerHtmlAttr(
   if (inner === null || inner.type === "JSXEmptyExpression") {
     fail(ctx, "BAD_ATTRIBUTE", "dangerouslySetInnerHTML needs an object with __html.", attribute);
   }
+  if (risk) ctx.capture(inner);
   const bare = unwrapParens(inner);
   if (bare.type === "ObjectExpression") {
     const properties = listAt(bare, "properties");
@@ -303,14 +315,14 @@ function innerHtmlAttr(
       if (typeof constant === "string") {
         return staticAttribute(tag, "innerHTML", constant, attribute);
       }
-      return { kind: "expr", name: "innerHTML", expr: expr(ctx, html), start: attribute.start };
+      return { kind: "expr", name: "innerHTML", expr: expr(ctx, html, ns), start: attribute.start };
     }
     fail(ctx, "BAD_ATTRIBUTE", "dangerouslySetInnerHTML needs a __html key.", attribute);
   }
   return {
     kind: "expr",
     name: "innerHTML",
-    expr: { text: `(${ctx.text(inner)})?.__html`, node: inner, dynamic: true },
+    expr: { text: `(${ctx.text(inner, ns)})?.__html`, node: inner, dynamic: true },
     start: attribute.start,
   };
 }
@@ -332,15 +344,28 @@ function explicitNames(attributes: AstNode[]): Set<string> {
  * the hydration-warning flags). A component receives `key` as a prop: `For` and the head components
  * (`Style`, `Meta`, ...) read it, as their own identity.
  */
-function lowerAttrs(ctx: LowerContext, attributes: AstNode[], tag: string | null): AttrIR[] {
+function lowerAttrs(
+  ctx: LowerContext,
+  attributes: AstNode[],
+  tag: string | null,
+  ns: Namespace,
+): AttrIR[] {
   const out: AttrIR[] = [];
+  // A component's props, and every prop of an element with a spread, are the entries of a props object,
+  // where a dynamic value is a getter and a `ref` is a method: `this` there is the object.
+  const risk = tag === null || attributes.some((a) => a.type === "JSXSpreadAttribute");
+  const mark = (inner: AstNode, name: string): void => {
+    if (risk && (name === "ref" || isDynamic(inner, ctx.source) || containsJsx(inner))) {
+      ctx.capture(inner);
+    }
+  };
   // An explicit `value` (or `checked`) wins over its default: one write, whichever comes first.
   const explicit = tag === null ? new Set<string>() : explicitNames(attributes);
   for (const attribute of attributes) {
     if (attribute.type === "JSXSpreadAttribute") {
       const argument = nodeAt(attribute, "argument");
       if (argument === null) continue;
-      out.push({ kind: "spread", expr: expr(ctx, argument), start: attribute.start });
+      out.push({ kind: "spread", expr: expr(ctx, argument, ns), start: attribute.start });
       continue;
     }
     const nameNode = nodeAt(attribute, "name");
@@ -354,7 +379,7 @@ function lowerAttrs(ctx: LowerContext, attributes: AstNode[], tag: string | null
       continue;
     const value = nodeAt(attribute, "value");
     if (tag !== null && name === "dangerouslySetInnerHTML") {
-      out.push(innerHtmlAttr(ctx, value, tag, attribute));
+      out.push(innerHtmlAttr(ctx, value, tag, attribute, ns, risk));
       continue;
     }
     const colon = name.indexOf(":");
@@ -369,7 +394,8 @@ function lowerAttrs(ctx: LowerContext, attributes: AstNode[], tag: string | null
           value,
         );
       }
-      out.push({ kind: "expr", name, expr: expr(ctx, inner), start: attribute.start });
+      mark(inner, name);
+      out.push({ kind: "expr", name, expr: expr(ctx, inner, ns), start: attribute.start });
     } else if (codeOnly) {
       out.push({
         kind: "expr",
@@ -408,10 +434,12 @@ function lowerAttrs(ctx: LowerContext, attributes: AstNode[], tag: string | null
         // `aria-*`, `data-*` and the enumerated attributes carry "true" as text (same rule as the runtime).
         out.push(staticAttribute(tag, name, writesBooleanAsText(name) ? "true" : true, attribute));
       } else {
-        out.push({ kind: "expr", name, expr: expr(ctx, inner), start: attribute.start });
+        mark(inner, name);
+        out.push({ kind: "expr", name, expr: expr(ctx, inner, ns), start: attribute.start });
       }
     } else if (isJsx(value)) {
-      out.push({ kind: "expr", name, expr: expr(ctx, value), start: attribute.start });
+      mark(value, name);
+      out.push({ kind: "expr", name, expr: expr(ctx, value, ns), start: attribute.start });
     } else {
       fail(ctx, "BAD_ATTRIBUTE", `Unsupported value for attribute "${name}".`, value);
     }
@@ -506,7 +534,7 @@ function lowerChildren(
           break;
         }
         const text = fold ? literalChildText(bare) : undefined;
-        if (text === undefined) pushChild(out, { kind: "slot", expr: expr(ctx, inner) });
+        if (text === undefined) pushChild(out, { kind: "slot", expr: expr(ctx, inner, ns) });
         else if (text.length > 0) pushChild(out, { kind: "text", value: text });
         break;
       }
@@ -549,9 +577,14 @@ export function lowerJsx(
     ctx,
     listAt(opening, "attributes"),
     info.kind === "component" ? null : info.name.toLowerCase(),
+    ns,
   );
   if (info.kind === "component") {
-    const children = lowerChildren(ctx, listAt(node, "children"), ns, depth, ancestors);
+    // The children of a component are templates of their own: `""` stops the chain of open elements that
+    // the parser would repair (`<p><Card><div/></Card></p>` is fine).
+    const written = listAt(node, "children");
+    for (const child of written) if (child.type !== "JSXText") ctx.capture(child);
+    const children = lowerChildren(ctx, written, ns, depth, [...ancestors, ""]);
     const component: ComponentIR = {
       kind: "component",
       callee: info.name,
@@ -694,9 +727,12 @@ function validateChildren(
     parent === "thead" ||
     parent === "tfoot" ||
     parent === "tr";
+  const chain = [...ancestors, parent];
   for (const child of children) {
     if (child.kind === "element") {
-      const problem = nestingProblem(parent, child.tag);
+      const problem =
+        nestingProblem(parent, child.tag) ??
+        (child.ns === "html" ? ancestorProblem(child.tag, chain) : undefined);
       if (problem !== undefined) fail(ctx, "INVALID_HTML_NESTING", problem, node);
     } else if (child.kind === "text" && strictParent && !WHITESPACE_ONLY.test(child.value)) {
       fail(ctx, "INVALID_HTML_NESTING", `Text cannot be a direct child of <${parent}>.`, node);

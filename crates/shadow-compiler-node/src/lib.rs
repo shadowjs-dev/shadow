@@ -3,6 +3,12 @@
 #![allow(clippy::needless_pass_by_value)]
 
 use napi::Result;
+// Not on Apple targets: mimalloc keeps its per-thread heap in a fixed pthread slot (108 and 109) that every
+// copy of it in the process shares, so a second copy of this addon (a second installed version of
+// `@shadow-js/compiler`, or the npm build beside the cargo build) read the first copy's heap pointers
+// and crashed on load. The system allocator has no such global state; the other platforms keep the
+// ordinary thread-local variables of mimalloc, which each copy has of its own.
+#[cfg(not(target_vendor = "apple"))]
 #[global_allocator]
 static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 

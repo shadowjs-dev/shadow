@@ -154,6 +154,153 @@ pub fn is_ignored_attribute(name: &str) -> bool {
     )
 }
 
+/// The event names (without `on`) of the HTML event handler content attributes, plus the spellings
+/// React adds, sorted for a binary search.
+const HANDLER_EVENTS: &[&str] = &[
+    "abort",
+    "afterprint",
+    "animationcancel",
+    "animationend",
+    "animationiteration",
+    "animationstart",
+    "auxclick",
+    "beforeinput",
+    "beforematch",
+    "beforeprint",
+    "beforetoggle",
+    "beforeunload",
+    "blur",
+    "cancel",
+    "canplay",
+    "canplaythrough",
+    "change",
+    "click",
+    "close",
+    "command",
+    "contextlost",
+    "contextmenu",
+    "contextrestored",
+    "copy",
+    "cuechange",
+    "cut",
+    "dblclick",
+    "doubleclick",
+    "drag",
+    "dragend",
+    "dragenter",
+    "dragexit",
+    "dragleave",
+    "dragover",
+    "dragstart",
+    "drop",
+    "durationchange",
+    "emptied",
+    "ended",
+    "error",
+    "focus",
+    "focusin",
+    "focusout",
+    "formdata",
+    "gotpointercapture",
+    "hashchange",
+    "input",
+    "invalid",
+    "keydown",
+    "keypress",
+    "keyup",
+    "languagechange",
+    "load",
+    "loadeddata",
+    "loadedmetadata",
+    "loadend",
+    "loadstart",
+    "lostpointercapture",
+    "message",
+    "messageerror",
+    "mousedown",
+    "mouseenter",
+    "mouseleave",
+    "mousemove",
+    "mouseout",
+    "mouseover",
+    "mouseup",
+    "offline",
+    "online",
+    "pagehide",
+    "pageshow",
+    "paste",
+    "pause",
+    "play",
+    "playing",
+    "pointercancel",
+    "pointerdown",
+    "pointerenter",
+    "pointerleave",
+    "pointermove",
+    "pointerout",
+    "pointerover",
+    "pointerup",
+    "popstate",
+    "progress",
+    "ratechange",
+    "rejectionhandled",
+    "reset",
+    "resize",
+    "scroll",
+    "scrollend",
+    "securitypolicyviolation",
+    "seeked",
+    "seeking",
+    "select",
+    "selectionchange",
+    "slotchange",
+    "stalled",
+    "storage",
+    "submit",
+    "suspend",
+    "timeupdate",
+    "toggle",
+    "touchcancel",
+    "touchend",
+    "touchmove",
+    "touchstart",
+    "transitioncancel",
+    "transitionend",
+    "transitionrun",
+    "transitionstart",
+    "unhandledrejection",
+    "unload",
+    "volumechange",
+    "waiting",
+    "wheel",
+];
+
+/// True for an attribute name that is an event handler content attribute under any capitalization
+/// (`onclick`, `ONCLICK`, `onClick`, and React's `onClickCapture`). A name that only starts with `on`
+/// (`online`, `onboarding`) is not one.
+///
+/// # Examples
+///
+/// ```
+/// use shadow_compiler::names::is_event_handler_attribute;
+/// assert!(is_event_handler_attribute("ONCLICK"));
+/// assert!(is_event_handler_attribute("onClickCapture"));
+/// assert!(!is_event_handler_attribute("online"));
+/// ```
+#[must_use]
+pub fn is_event_handler_attribute(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    let Some(event) = lower.strip_prefix("on") else {
+        return false;
+    };
+    if HANDLER_EVENTS.binary_search(&event).is_ok() {
+        return true;
+    }
+    event
+        .strip_suffix("capture")
+        .is_some_and(|base| HANDLER_EVENTS.binary_search(&base).is_ok())
+}
+
 /// The DOM event name of an event attribute and how it is bound.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventPlan {
@@ -236,6 +383,13 @@ mod tests {
         let mut sorted = SVG_HYPHENATED.to_vec();
         sorted.sort_unstable();
         assert_eq!(sorted, SVG_HYPHENATED);
+    }
+
+    #[test]
+    fn handler_events_are_sorted() {
+        let mut sorted = HANDLER_EVENTS.to_vec();
+        sorted.sort_unstable();
+        assert_eq!(sorted, HANDLER_EVENTS);
     }
 
     #[test]

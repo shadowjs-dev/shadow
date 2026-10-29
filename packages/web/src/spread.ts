@@ -3,9 +3,9 @@ import { setAttribute, setAttributeNS, setBoolAttribute } from "./attributes";
 import { autoFocus } from "./autofocus";
 import { applyClass, asRecord, classList, style } from "./class-style";
 import { bindEvent } from "./events";
-import { bindRegion, createRegion } from "./insert";
+import { bindRegion, createRegion, watchCommits } from "./insert";
 import { claims } from "./internal/hydration-hooks";
-import { attributeName, eventPlan, IGNORED_KEYS } from "./internal/react-names";
+import { attributeName, eventPlan, IGNORED_KEYS, isFlagAttribute } from "./internal/react-names";
 import { plainText, setSelectValue } from "./select-value";
 
 /** The namespace of `xlink:` attributes (SVG's legacy links). */
@@ -18,7 +18,7 @@ function innerHtmlValue(value: unknown): string {
 }
 
 /** Keys that would reach a prototype if written as properties. Ignored everywhere. */
-const FORBIDDEN_NAMES = new Set(["__proto__", "constructor", "prototype"]);
+const FORBIDDEN_NAMES = /^(?:__proto__|constructor|prototype)$/;
 
 /** Mutable bookkeeping for one spread: the values last applied and the event bindings. */
 interface SpreadState {
@@ -50,7 +50,7 @@ function readEntries(props: unknown, textarea: boolean): Array<[string, unknown]
   let value: unknown;
   let hasValue = false;
   for (const key of Object.keys(props)) {
-    if (FORBIDDEN_NAMES.has(nameOf(key)) || IGNORED_KEYS.has(key)) continue;
+    if (FORBIDDEN_NAMES.test(nameOf(key)) || IGNORED_KEYS.test(key)) continue;
     if (key === "children") {
       // A textarea's children are its value (the server writes them as its content): a text node
       // child would not follow the data once the user has typed.
@@ -135,11 +135,11 @@ function applyKey(
     setSelectValue(el, value);
     return;
   }
-  if (!svg && LIVE_PROPERTIES.has(key) && key in el) {
+  if (!svg && LIVE_PROPERTIES.test(key) && key in el) {
     // State the user changes (a typed value, a toggled box) lives in the property; the attribute is
     // only the default, and writing it stops the element following the data once it is dirty.
     liveDiffers(el, key, value, svg) &&
-      Reflect.set(el, key, STRING_PROPERTIES.has(key) ? (value ?? "") : Boolean(value));
+      Reflect.set(el, key, STRING_PROPERTIES.test(key) ? (value ?? "") : Boolean(value));
     // An input's `value` attribute is its default (what a form reset restores) and what the server
     // wrote; keep it equal to the live value like server markup, so both renders match.
     if (key === "value" && el instanceof HTMLInputElement) {
@@ -164,34 +164,29 @@ function writeKey(el: Element, key: string, value: unknown, svg: boolean): void 
     setBoolAttribute(el, key.slice(5), value);
   } else {
     const wire = attributeName(key, svg);
-    if (wire.startsWith("xlink:")) setAttributeNS(el, XLINK_NS, wire, value);
+    // The server writes these names as flags by truthiness (`disabled: 0` is absent): so does the client.
+    if (isFlagAttribute(wire, value)) setBoolAttribute(el, wire, value);
+    else if (wire.startsWith("xlink:")) setAttributeNS(el, XLINK_NS, wire, value);
     else setAttribute(el, wire, value);
   }
 }
 
 /** Props written as element properties, like the compiler does for the same names in JSX. */
-const LIVE_PROPERTIES: ReadonlySet<string> = new Set([
-  "value",
-  "checked",
-  "selected",
-  "muted",
-  "indeterminate",
-  "defaultValue",
-  "defaultChecked",
-]);
+const LIVE_PROPERTIES =
+  /^(?:value|checked|selected|muted|indeterminate|defaultValue|defaultChecked)$/;
 /** The properties of {@link LIVE_PROPERTIES} that hold text; the others are booleans. */
-const STRING_PROPERTIES: ReadonlySet<string> = new Set(["value", "defaultValue"]);
+const STRING_PROPERTIES = /^(?:value|defaultValue)$/;
 
 /**
  * True when a live property (typed value, toggled box) no longer matches the value last applied, so
  * an unchanged prop is written again and the element follows the data.
  */
 function liveDiffers(el: Element, key: string, value: unknown, svg: boolean): boolean {
-  if (svg || !LIVE_PROPERTIES.has(key) || !(key in el)) return false;
+  if (svg || !LIVE_PROPERTIES.test(key) || !(key in el)) return false;
   // A select is written again whenever its props run: setting the value it already shows changes nothing.
   if (key === "value" && el instanceof HTMLSelectElement) return true;
   const live = Reflect.get(el, key);
-  return STRING_PROPERTIES.has(key) ? live !== plainText(value) : live !== Boolean(value);
+  return STRING_PROPERTIES.test(key) ? live !== plainText(value) : live !== Boolean(value);
 }
 
 /**
@@ -275,22 +270,64 @@ export function spread(el: Element, props: unknown, isSVG = false, skipChildren 
   // A function is an accessor of the props (`{...props.attrs}` compiles to one): read it inside
   // the effects below so the element follows it.
   const read = (): unknown => (typeof props === "function" ? (props as () => unknown)() : props);
-  const textarea = el.localName === "textarea";
-  if (!skipChildren && !textarea) {
+  const state = newState();
+  if (!skipChildren && el.localName !== "textarea") {
     // Spread children own the whole element; ssrElement may emit their text without region markers.
     const initial = claims.current.isClaiming()
       ? (claims.current.takeRegion(el, null) ?? Array.from(el.childNodes))
       : undefined;
     const region = createRegion(el, null, initial);
     bindRegion(region, () => (read() as { readonly children?: unknown } | null)?.children);
+    followOptions(el, isSVG, state);
   }
-  const state: SpreadState = {
+  applyProps(el, read, isSVG, state);
+}
+
+/**
+ * New options replace the ones that held the selection, and the value effect does not read
+ * `children`: a select spread selects its value again after every commit to its children, as the
+ * compiled path does.
+ */
+function followOptions(el: Element, isSVG: boolean, state: SpreadState): void {
+  if (isSVG || !(el instanceof HTMLSelectElement)) return;
+  watchCommits(el, () => {
+    const key = state.values.has("value") ? "value" : "defaultValue";
+    if (state.values.has(key)) setSelectValue(el, state.values.get(key));
+  });
+}
+
+/** The bookkeeping of a spread that has applied nothing yet. */
+function newState(): SpreadState {
+  return {
     values: new Map(),
     unbinders: new Map(),
     styleValue: undefined,
     classListValue: undefined,
     refCleanup: undefined,
   };
+}
+
+/**
+ * Applies the props of `read()` to `el` and keeps them in sync, without a children region: what
+ * {@link spread} does after it has bound the children. `Dynamic` calls it directly, because it binds
+ * the children itself, so an app that only renders `Dynamic` does not carry the code for a spread's
+ * children. A select still selects its value again when `Dynamic` commits new options.
+ * @internal
+ */
+export function spreadProps(el: Element, props: unknown, isSVG: boolean): void {
+  if (props === null || (typeof props !== "object" && typeof props !== "function")) return;
+  const state = newState();
+  followOptions(el, isSVG, state);
+  applyProps(
+    el,
+    () => (typeof props === "function" ? (props as () => unknown)() : props),
+    isSVG,
+    state,
+  );
+}
+
+function applyProps(el: Element, read: () => unknown, isSVG: boolean, state: SpreadState): void {
+  const textarea = el.localName === "textarea";
   // Native listeners come off with the owner, even if the element outlives it.
   onCleanup(() => {
     for (const unbind of state.unbinders.values()) unbind();

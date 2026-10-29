@@ -8,7 +8,7 @@ import {
   useMemo,
   useSignal,
 } from "@shadow-js/core";
-import { createSignalNode, handleError, readSignal, writeSignal } from "@shadow-js/core/extend";
+import { handleError, readSignal, SignalNode, writeSignal } from "@shadow-js/core/extend";
 import { currentScope, type HydrationScope, withScope } from "../extend";
 import type { JsxChild } from "../jsx/types";
 import { attachHotModules, createHotLink, type HotLink } from "./hot-link";
@@ -91,7 +91,7 @@ export function ErrorBoundary(props: ErrorBoundaryLooseProps): Accessor<unknown>
 export function ErrorBoundary(props: ErrorBoundaryLooseProps): Accessor<unknown> {
   // An extension-API cell: a failure is boundary state, written from places a plain write refuses
   // (a sibling boundary's fallback throwing while its memo computes).
-  const failureCell = createSignalNode<Failure | undefined>(undefined, Object.is);
+  const failureCell = new SignalNode<Failure | undefined>(undefined, Object.is);
   /** Where an error of this boundary's own fallback goes: the boundary that encloses it. */
   const parentOwner = getOwner();
   // The root's reporters (render/hydrate options): an error this boundary takes is reported to them.

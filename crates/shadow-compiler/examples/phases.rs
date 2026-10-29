@@ -145,7 +145,7 @@ fn main() {
             let mut placed_all = Vec::new();
             for root in roots {
                 let site = ctx.site_of(root, 0);
-                if let Ok(placed) = ctx.place(&site) {
+                if let Ok(placed) = ctx.place(&site, shadow_compiler::ir::Namespace::Html) {
                     placed_all.push(placed);
                 }
             }

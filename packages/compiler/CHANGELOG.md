@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.0.3
+
+### Fixed
+
+- Loading two copies of the native addon into one process (two installed versions of `@shadow-js/compiler`, or the npm build beside a cargo build) no longer crashes it on macOS. The addon used mimalloc, which keeps its per-thread heap in a pthread slot that all copies in a process share; the macOS build now uses the system allocator.
+- `await` and `yield` inside JSX are read before the JSX (an arrow function applied to the values), so the output is valid JavaScript on the DOM and server targets.
+- An expression that starts with `{` but is not an object literal (`{{ a: 1 }[key]}`) is parenthesized where it becomes an arrow body.
+- `this` and `arguments` in the props and children of a component, and in the props after a spread, are read from locals; `super` there is refused with `UNSUPPORTED_SUPER`.
+- A derived prop used as a member tag (`<ui.Button />`) is read through its accessor (`ui.value.Button`).
+- `on:`, `oncapture:`, `use:`, `class:` and `style:` after a spread are compiled as directives, in both the TypeScript and the Rust implementations.
+- On the server, `class:` and `style:` on an element with a spread are written into its class and style instead of as literal attributes.
+- A static `style` and a `style:` or `style={...}` on the server are one style attribute.
+- The server passes `on*` and `ref` props to components, as the client does (the frozen corpus of real components is recorded again for it).
+- A DOM property is assigned only on the elements that have it; on other elements it is an attribute (`value` on `li` no longer becomes `0`).
+- A hyphenated name on a custom element (`data-*`, `aria-*`) is an attribute.
+- A function given to `prop:`, `attr:` or to a property of a custom element is passed as it is instead of being called.
+- JSX inside the expressions of an `svg` or `math` element is built in that namespace.
+- Markup the HTML parser repairs is refused with `INVALID_HTML_NESTING` for the ancestor chain: a block deep inside a `p`, `li`/`dd`/`dt`/`nobr` in themselves, `optgroup` children, and elements inside `textarea`, `title`, `script` and `style`.
+- `SHADOW_COMPILER_NATIVE_PATH` is tried first on a platform without a prebuilt addon.
+- A tag opened with whitespace or a comment after `<` is JSX; a string given to an event handler attribute is refused whatever its case, and `online` or `onboarding` are not event handlers.
+
 ## 1.0.2
 
 ### Fixed

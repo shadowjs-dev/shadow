@@ -1,10 +1,11 @@
 import { batch, untrack, useRenderEffect } from "@shadow-js/core";
-import { setAttribute } from "./attributes";
+import { setAttribute, setBoolAttribute } from "./attributes";
 import { style } from "./class-style";
 import { insert } from "./insert";
 import { checkClaimedTag } from "./internal/claim";
 import { claims } from "./internal/hydration-hooks";
 import { nextKey } from "./internal/hydration-scope";
+import { isFlagAttribute } from "./internal/react-names";
 import { ssrElement, ssrRaw } from "./server/element";
 import { isTextOnlyElement } from "./server/raw-text";
 
@@ -124,7 +125,11 @@ export function element(tag: string, props: object): unknown {
       useRenderEffect(
         () => read[key],
         (value) => {
-          setAttribute(el, key, value);
+          // The server writes a boolean attribute by truthiness; the client does the same. A name
+          // that is a flag has no React spelling, so lower case is its attribute name.
+          const name = key.toLowerCase();
+          if (isFlagAttribute(name, value)) setBoolAttribute(el, name, value);
+          else setAttribute(el, key, value);
         },
       );
     }

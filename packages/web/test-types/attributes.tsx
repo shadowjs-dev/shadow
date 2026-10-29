@@ -42,8 +42,9 @@ sink(<div style={{ backgroundcolor: "red" }} />);
 sink(<div style={{ color: true }} />);
 // @ts-expect-error style is a string or an object, not a number
 sink(<div style={42} />);
-// @ts-expect-error style must not be an array
-sink(<div style={["color: red"]} />);
+sink(<div style={["color: red", { marginTop: 4 }, null, false]} />);
+// @ts-expect-error style arrays are not nested
+sink(<div style={[["color: red"]]} />);
 
 // ---- ref -----------------------------------------------------------------------------------------
 let div: HTMLDivElement | undefined;

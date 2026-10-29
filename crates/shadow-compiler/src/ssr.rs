@@ -6,7 +6,7 @@ use crate::dom::{RAW_TEXT_ELEMENTS, VOID_ELEMENTS, is_event_attribute};
 use crate::error::{Result, fail_at, unsupported};
 use crate::ir::{Attr, ChildIR, ComponentIR, ElementIR, ExprIR, Namespace, RootIR, StaticValue};
 use crate::jsutil::json_string;
-use crate::names::attribute_name;
+use crate::names::{attribute_name, is_event_handler_attribute};
 use crate::text::{escape_html_attribute, escape_html_text, property_key};
 
 /// Properties written as plain attributes on the server (the client sets them as DOM properties).
@@ -142,6 +142,58 @@ fn class_sources(element: &ElementIR) -> ClassSources {
     ClassSources { statics, dynamic }
 }
 
+/// The `style` sources of an element: its static string first, then each `style` and `style:` in order.
+struct StyleSources {
+    statics: Vec<String>,
+    dynamic: Vec<String>,
+}
+
+fn style_sources(element: &ElementIR) -> StyleSources {
+    let mut statics = Vec::new();
+    let mut dynamic = Vec::new();
+    for attr in &element.attrs {
+        match attr {
+            Attr::Static {
+                name,
+                value: StaticValue::Text(text),
+                ..
+            } if name == "style" => statics.push(text.clone()),
+            Attr::Expr { name, expr, .. } => {
+                if name == "style" {
+                    dynamic.push(expr.text.to_string());
+                } else if let Some(rest) = name.strip_prefix("style:") {
+                    dynamic.push(format!("{{ {}: {} }}", json_string(rest), expr.text));
+                }
+            }
+            _ => {}
+        }
+    }
+    StyleSources { statics, dynamic }
+}
+
+/// One piece of a props object: a spread, or the entries between spreads.
+enum Piece {
+    Plain(Vec<String>),
+    Spread(String),
+}
+
+fn push_entry(pieces: &mut Vec<Piece>, entry: String) {
+    if let Some(Piece::Plain(entries)) = pieces.last_mut() {
+        entries.push(entry);
+        return;
+    }
+    pieces.push(Piece::Plain(vec![entry]));
+}
+
+/// True for a name the server never writes on an element: handlers, `ref` and the directives for the client.
+fn client_only(name: &str) -> bool {
+    name == "ref"
+        || is_event_name(name)
+        || name.starts_with("on:")
+        || name.starts_with("use:")
+        || name.starts_with("prop:")
+}
+
 fn inner_html_of<'e, 'a>(element: &'e ElementIR<'a>) -> Option<&'e ExprIR<'a>> {
     element.attrs.iter().find_map(|attr| match attr {
         Attr::Expr { name, expr, .. } if name == "innerHTML" => Some(expr),
@@ -206,18 +258,26 @@ impl<'t, 'a> Ctx<'t, 'a> {
         }
     }
 
-    /// Runtime props for an element or component that needs `mergeProps`/`ssrElement` semantics.
-    fn props_object(&mut self, attrs: &[Attr]) -> String {
-        enum Piece {
-            Plain(Vec<String>),
-            Spread(String),
-        }
-        let mut segments: Vec<Piece> = vec![Piece::Plain(Vec::new())];
-        let push_plain = |segments: &mut Vec<Piece>, entry: String| {
-            if let Some(Piece::Plain(entries)) = segments.last_mut() {
-                entries.push(entry);
-            }
-        };
+    /// Runtime props for a component, or for an element with a spread (`component` false), that need
+    /// `mergeProps`/`ssrElement` semantics. A component gets every prop the client gives it, handlers and
+    /// `ref` included. An element gets none of those (the server writes no handler), and its `class:` and
+    /// `style:` directives become the last `classList` and `style` entries, because they apply after the
+    /// spread. The plain `classList` and `style` props of that element move into those entries so that no
+    /// source is lost; a `style` or `classList` that a spread supplies is replaced by them.
+    fn props_object(&mut self, attrs: &[Attr], component: bool) -> String {
+        let mut pieces: Vec<Piece> = Vec::new();
+        let has_style_directive = !component
+            && attrs
+                .iter()
+                .any(|attr| matches!(attr, Attr::Expr { name, .. } if name.starts_with("style:")));
+        let has_class_directive = !component
+            && attrs
+                .iter()
+                .any(|attr| matches!(attr, Attr::Expr { name, .. } if name.starts_with("class:")));
+        let mut style_list: Vec<String> = Vec::new();
+        let mut class_members: Vec<String> = Vec::new();
+        let mut class_list_source: Option<String> = None;
+        let mut dynamic_directives = false;
         for attr in attrs {
             match attr {
                 Attr::Spread { expr, .. } => {
@@ -226,52 +286,98 @@ impl<'t, 'a> Ctx<'t, 'a> {
                     } else {
                         expr.text.to_string()
                     };
-                    segments.push(Piece::Spread(text));
-                    segments.push(Piece::Plain(Vec::new()));
+                    pieces.push(Piece::Spread(text));
                 }
                 Attr::Static {
                     name, value, js, ..
                 } => {
+                    if has_style_directive
+                        && name == "style"
+                        && let StaticValue::Text(text) = value
+                    {
+                        style_list.push(json_string(text));
+                        continue;
+                    }
                     let rendered = match value {
                         StaticValue::True => "true".to_string(),
                         StaticValue::Text(text) => js.clone().unwrap_or_else(|| json_string(text)),
                     };
-                    push_plain(&mut segments, format!("{}: {rendered}", property_key(name)));
+                    push_entry(&mut pieces, format!("{}: {rendered}", property_key(name)));
                 }
                 Attr::Expr { name, expr, .. } => {
-                    if name != "ref"
-                        && !is_event_name(name)
-                        && (expr.dynamic || contains_jsx(self.tree, expr.node))
-                    {
-                        push_plain(
-                            &mut segments,
+                    let dynamic = expr.dynamic || contains_jsx(self.tree, expr.node);
+                    if !component && client_only(name) {
+                        // Nothing of it reaches the markup.
+                    } else if !component && let Some(rest) = name.strip_prefix("class:") {
+                        class_members.push(format!("{}: {}", json_string(rest), expr.text));
+                        dynamic_directives |= dynamic;
+                    } else if !component && let Some(rest) = name.strip_prefix("style:") {
+                        style_list.push(format!("{{ {}: {} }}", json_string(rest), expr.text));
+                        dynamic_directives |= dynamic;
+                    } else if has_style_directive && name == "style" {
+                        style_list.push(expr.text.to_string());
+                        dynamic_directives |= dynamic;
+                    } else if has_class_directive && name == "classList" {
+                        class_list_source = Some(expr.text.to_string());
+                        dynamic_directives |= dynamic;
+                    } else if name == "ref" {
+                        let constant = self.is_constant_ref(expr.node);
+                        let entry = self.ref_statement(&expr.text, expr.node, constant);
+                        push_entry(&mut pieces, entry);
+                    } else if dynamic {
+                        push_entry(
+                            &mut pieces,
                             format!("get {}() {{\nreturn {};\n}}", property_key(name), expr.text),
                         );
-                    } else if name != "ref" && !is_event_name(name) {
-                        push_plain(
-                            &mut segments,
+                    } else {
+                        push_entry(
+                            &mut pieces,
                             format!("{}: {}", property_key(name), expr.text),
                         );
                     }
                 }
             }
         }
-        let mut pieces: Vec<String> = Vec::new();
-        for segment in &segments {
-            match segment {
-                Piece::Plain(entries) if entries.is_empty() => {}
-                Piece::Plain(entries) => pieces.push(format!("{{\n{}\n}}", entries.join(",\n"))),
-                Piece::Spread(text) => pieces.push(text.clone()),
+        let folded = |key: &str, value: String| {
+            if dynamic_directives {
+                format!("get {key}() {{\nreturn {value};\n}}")
+            } else {
+                format!("{key}: {value}")
+            }
+        };
+        if has_class_directive {
+            let spread_old = class_list_source
+                .map(|source| format!("...({source}), "))
+                .unwrap_or_default();
+            let entry = folded(
+                "classList",
+                format!("{{ {spread_old}{} }}", class_members.join(", ")),
+            );
+            pieces.push(Piece::Plain(vec![entry]));
+        }
+        if has_style_directive {
+            let entry = folded("style", format!("[{}]", style_list.join(", ")));
+            match pieces.last_mut() {
+                Some(Piece::Plain(entries)) if has_class_directive => entries.push(entry),
+                _ => pieces.push(Piece::Plain(vec![entry])),
             }
         }
-        if pieces.is_empty() {
+        let mut texts: Vec<String> = Vec::new();
+        for piece in &pieces {
+            match piece {
+                Piece::Plain(entries) if entries.is_empty() => {}
+                Piece::Plain(entries) => texts.push(format!("{{\n{}\n}}", entries.join(",\n"))),
+                Piece::Spread(text) => texts.push(text.clone()),
+            }
+        }
+        if texts.is_empty() {
             return "{}".to_string();
         }
         // A lone dynamic spread is an accessor of the props: mergeProps turns it into a props object.
-        if pieces.len() == 1 && !pieces[0].starts_with("() =>") {
-            return pieces[0].clone();
+        if texts.len() == 1 && !texts[0].starts_with("() =>") {
+            return texts[0].clone();
         }
-        format!("{}({})", self.reg.helper("mergeProps"), pieces.join(", "))
+        format!("{}({})", self.reg.helper("mergeProps"), texts.join(", "))
     }
 
     fn serialize_attrs(&mut self, element: &ElementIR, parts: &mut Parts) -> Result<()> {
@@ -285,19 +391,9 @@ impl<'t, 'a> Ctx<'t, 'a> {
         }
         let svg = element.ns == Namespace::Svg;
         let classes = class_sources(element);
+        let styles = style_sources(element);
         let mut class_done = false;
         let mut style_done = false;
-        let mut style_sources: Vec<String> = Vec::new();
-        for attr in &element.attrs {
-            let Attr::Expr { name, expr, .. } = attr else {
-                continue;
-            };
-            if name == "style" {
-                style_sources.push(expr.text.to_string());
-            } else if let Some(rest) = name.strip_prefix("style:") {
-                style_sources.push(format!("{{ {}: {} }}", json_string(rest), expr.text));
-            }
-        }
         let emit_class = |this: &mut Self, parts: &mut Parts, class_done: &mut bool| {
             if *class_done {
                 return;
@@ -317,6 +413,27 @@ impl<'t, 'a> Ctx<'t, 'a> {
             let call = this.reg.helper("ssrClass");
             parts.hole(format!("{call}([{}])", items.join(", ")));
         };
+        // A static style with no dynamic one stays markup; otherwise every source is one `ssrStyle`, so
+        // the element never has two `style` attributes (the static string comes first).
+        let emit_style = |this: &mut Self, parts: &mut Parts, style_done: &mut bool| {
+            if *style_done {
+                return;
+            }
+            *style_done = true;
+            if styles.dynamic.is_empty() {
+                if !styles.statics.is_empty() {
+                    parts.text(&format!(
+                        " style=\"{}\"",
+                        escape_html_attribute(&styles.statics.join(";"))
+                    ));
+                }
+                return;
+            }
+            let mut items: Vec<String> = styles.statics.iter().map(|s| json_string(s)).collect();
+            items.extend(styles.dynamic.iter().cloned());
+            let call = this.reg.helper("ssrStyle");
+            parts.hole(format!("{call}([{}])", items.join(", ")));
+        };
         for attr in &element.attrs {
             match attr {
                 Attr::Static {
@@ -326,7 +443,11 @@ impl<'t, 'a> Ctx<'t, 'a> {
                         emit_class(self, parts, &mut class_done);
                         continue;
                     }
-                    if is_event_name(name) && matches!(value, StaticValue::Text(_)) {
+                    if name == "style" && matches!(value, StaticValue::Text(_)) {
+                        emit_style(self, parts, &mut style_done);
+                        continue;
+                    }
+                    if is_event_handler_attribute(name) && matches!(value, StaticValue::Text(_)) {
                         return fail_at(
                             "STRING_EVENT_HANDLER",
                             format!("\"{name}\" received a string. Pass a function instead."),
@@ -361,11 +482,7 @@ impl<'t, 'a> Ctx<'t, 'a> {
                         continue;
                     }
                     if name == "style" || name.starts_with("style:") {
-                        if !style_done {
-                            style_done = true;
-                            let call = self.reg.helper("ssrStyle");
-                            parts.hole(format!("{call}([{}])", style_sources.join(", ")));
-                        }
+                        emit_style(self, parts, &mut style_done);
                         continue;
                     }
                     if name == "innerHTML" || SKIPPED_PROPERTIES.contains(&name.as_str()) {
@@ -498,7 +615,7 @@ impl<'t, 'a> Ctx<'t, 'a> {
                 ""
             };
             let call = self.reg.helper("ssrElement");
-            let props = self.props_object(&element.attrs);
+            let props = self.props_object(&element.attrs, false);
             parts.hole(format!(
                 "{call}({}, {props}, {child_code}, {}{svg_flag})",
                 json_string(&element.tag),
@@ -585,7 +702,7 @@ impl<'t, 'a> Ctx<'t, 'a> {
     }
 
     fn component_props(&mut self, component: &ComponentIR) -> Result<String> {
-        let base = self.props_object(&component.attrs);
+        let base = self.props_object(&component.attrs, true);
         if component.children.is_empty() {
             return Ok(base);
         }

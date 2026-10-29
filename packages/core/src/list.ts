@@ -1,10 +1,9 @@
 import {
   type Accessor,
-  createSignalNode,
   disposeOwner,
   Owner,
   readSignal,
-  type SignalNode,
+  SignalNode,
   warn,
   writeSignal,
 } from "./extend";
@@ -45,12 +44,12 @@ class Row<T, U> {
   }
 
   readItem(): T {
-    this.itemNode ??= createSignalNode(this.item, Object.is);
+    this.itemNode ??= new SignalNode(this.item, Object.is);
     return readSignal(this.itemNode);
   }
 
   readIndex(): number {
-    this.indexNode ??= createSignalNode(this.index, Object.is);
+    this.indexNode ??= new SignalNode(this.index, Object.is);
     return readSignal(this.indexNode);
   }
 

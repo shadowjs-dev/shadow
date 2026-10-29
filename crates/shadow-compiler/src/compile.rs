@@ -11,6 +11,8 @@ use crate::derive::derive_locals;
 use crate::diagnostics::{CompileError, to_compile_error_in};
 use crate::error::{Failure, unsupported};
 use crate::hmr::{apply_hmr, hmr_epilogue, hmr_prelude};
+use crate::ir::Namespace;
+use crate::jsutil::is_js_whitespace;
 use crate::magic::MagicString;
 use crate::origin::{Origin, Retracer, Rope};
 use crate::parse::parse_module;
@@ -95,8 +97,9 @@ pub enum CompileFailure {
     Unsupported(String),
 }
 
-/// True when the text may hold JSX: a `<` followed by what can start a tag name (JSX names are Unicode
-/// identifiers: a letter, `_`, `$`) or `>` (`/<[\p{ID_Start}_$>]/u`).
+/// True when the text may hold JSX: a `<`, then whitespace and comments (JSX allows `< div>` and a
+/// comment between the bracket and the name), then what can start a tag name (JSX names are Unicode
+/// identifiers: a letter, `_`, `$`) or `>`.
 fn has_jsx_hint(text: &str) -> bool {
     let bytes = text.as_bytes();
     let mut index = 0;
@@ -105,7 +108,27 @@ fn has_jsx_hint(text: &str) -> bool {
         .and_then(|rest| rest.iter().position(|&b| b == b'<'))
     {
         let at = index + found;
-        if let Some(next) = text.get(at + 1..).and_then(|rest| rest.chars().next())
+        let mut cursor = at + 1;
+        while let Some(rest) = text.get(cursor..) {
+            if let Some(next) = rest.chars().next()
+                && is_js_whitespace(next)
+            {
+                cursor += next.len_utf8();
+            } else if rest.starts_with("/*") {
+                match rest.get(2..).and_then(|after| after.find("*/")) {
+                    Some(close) => cursor += 2 + close + 2,
+                    None => break,
+                }
+            } else if rest.starts_with("//") {
+                let stop = rest
+                    .find(['\n', '\r', '\u{2028}', '\u{2029}'])
+                    .unwrap_or(rest.len());
+                cursor += stop;
+            } else {
+                break;
+            }
+        }
+        if let Some(next) = text.get(cursor..).and_then(|rest| rest.chars().next())
             && (next == '_' || next == '$' || next == '>' || is_identifier_start(next))
         {
             return true;
@@ -302,7 +325,7 @@ fn run(
     let mut magic = MagicString::new(input);
     for root in roots {
         let site: RootSite = ctx.site_of(root, 0);
-        let placed = stage(ctx.place(&site), input)?;
+        let placed = stage(ctx.place(&site, Namespace::Html), input)?;
         if let Err(error) = magic.overwrite(placed.start as usize, placed.end as usize, placed.text)
         {
             return unsupported_stage(error.message());

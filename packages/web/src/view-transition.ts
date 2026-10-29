@@ -1,4 +1,5 @@
 import { type Accessor, flushSync, untrack, useEffect, useId } from "@shadow-js/core";
+import { watchCommits } from "./insert";
 
 /** The subset of `Document` the View Transitions API adds (not yet in every TypeScript lib). */
 type ViewTransitionDocument = Document & {
@@ -145,13 +146,21 @@ export function ViewTransition(props: ViewTransitionProps): Accessor<unknown> {
   const start = document.createTextNode("");
   const end = document.createTextNode("");
   const generated = props.name === true ? `vt-${useId()}` : undefined;
-  // Runs after the DOM is committed, so the element it styles exists.
+  // Runs after the DOM is committed, so the element it styles exists. The content can change later
+  // (a Show that opens, a fallback replaced by content) and the first element is then another one:
+  // the name is applied again after each commit to the parent's regions, where that change lands.
   useEffect(() => {
-    const element = firstElementBetween(start, end);
-    if (element === null) return;
     const name = generated ?? (typeof props.name === "string" ? props.name : undefined);
-    setOrClear(element, "view-transition-name", name);
-    setOrClear(element, "view-transition-class", props.class);
+    const transitionClass = props.class;
+    const apply = (): void => {
+      const element = firstElementBetween(start, end);
+      if (element === null) return;
+      setOrClear(element, "view-transition-name", name);
+      setOrClear(element, "view-transition-class", transitionClass);
+    };
+    apply();
+    const parent = start.parentNode;
+    if (parent !== null) watchCommits(parent, apply);
   });
   return () => [start, contentValue(), end];
 }

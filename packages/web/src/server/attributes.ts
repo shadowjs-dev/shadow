@@ -29,37 +29,6 @@ const ENUMERATED_ATTRIBUTES: ReadonlySet<string> = new Set([
   "contenteditable",
 ]);
 
-/**
- * Boolean attributes that a props object writes as presence flags (`disabled: true` gives a bare
- * `disabled`). Lower-case names only.
- * @internal
- */
-export const BOOLEAN_ATTRIBUTES: ReadonlySet<string> = new Set([
-  "async",
-  "autofocus",
-  "autoplay",
-  "checked",
-  "controls",
-  "default",
-  "defer",
-  "disabled",
-  "formnovalidate",
-  "hidden",
-  "inert",
-  "ismap",
-  "loop",
-  "multiple",
-  "muted",
-  "nomodule",
-  "novalidate",
-  "open",
-  "playsinline",
-  "readonly",
-  "required",
-  "reversed",
-  "selected",
-]);
-
 /** URL prefixes (after normalization) that are never written. Same as the client. */
 const UNSAFE_URL_PREFIXES: readonly string[] = ["javascript:", "data:text/html", "vbscript:"];
 

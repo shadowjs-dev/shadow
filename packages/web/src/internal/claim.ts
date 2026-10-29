@@ -63,8 +63,7 @@ function isMarker(node: Node, data: string): boolean {
 function prepare(root: Element, pending: WeakMap<Node, Node[][]>, lifted: Node[][]): void {
   const stack: Element[] = [root];
   while (stack.length > 0) {
-    const parent = stack.pop();
-    if (parent === undefined) break;
+    const parent = stack.pop() as Element;
     let child: ChildNode | null = parent.firstChild;
     while (child !== null) {
       const following: ChildNode | null = child.nextSibling;

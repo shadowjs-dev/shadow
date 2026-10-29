@@ -18,12 +18,12 @@ function markLongestIncreasing(values: readonly number[], offset: number, marks:
   const tails: number[] = [];
   const previous: number[] = values.map(() => -1);
   for (let index = 0; index < values.length; index += 1) {
-    const value = values[index] ?? 0;
+    const value = values[index] as number;
     let low = 0;
     let high = tails.length;
     while (low < high) {
       const middle = (low + high) >> 1;
-      const probe = values[tails[middle] ?? 0] ?? 0;
+      const probe = values[tails[middle] as number] as number;
       if (probe < value) low = middle + 1;
       else high = middle;
     }
@@ -33,8 +33,8 @@ function markLongestIncreasing(values: readonly number[], offset: number, marks:
   }
   let cursor = tails.at(-1) ?? -1;
   while (cursor !== -1) {
-    marks[(values[cursor] ?? 0) - offset] = 1;
-    cursor = previous[cursor] ?? -1;
+    marks[(values[cursor] as number) - offset] = 1;
+    cursor = previous[cursor] as number;
   }
 }
 
@@ -109,8 +109,7 @@ export function reconcileNodes(
 
   const survivors: number[] = [];
   for (let index = head; index < prevTail; index += 1) {
-    const node = prev[index];
-    if (node === undefined) continue;
+    const node = prev[index] as Node;
     const position = target.get(node);
     if (position === undefined) removeNode(parent, node);
     else survivors.push(position);
@@ -130,8 +129,7 @@ export function reconcileNodes(
 
   let anchorNode = before;
   for (let index = nextTail - 1; index >= head; index -= 1) {
-    const node = next[index];
-    if (node === undefined) continue;
+    const node = next[index] as Node;
     if (stable[index - head] !== 1) {
       if (movable && node.parentNode === parent)
         (parent as MovableParent).moveBefore(node, anchorNode);

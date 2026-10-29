@@ -1,9 +1,9 @@
 import {
   type Accessor,
-  createSignalNode,
   type Equals,
   readSignal,
   type Setter,
+  SignalNode,
   writeSignal,
 } from "./extend";
 import { untrack } from "./ownership";
@@ -49,7 +49,7 @@ export interface SignalOptions<T> {
  */
 export function useSignal<T>(value: T, options?: SignalOptions<T>): [Accessor<T>, Setter<T>] {
   const equals: Equals<T> = options?.equals === undefined ? Object.is : options.equals;
-  const signal = createSignalNode<T>(value, equals, options?.name);
+  const signal = new SignalNode<T>(value, equals, options?.name);
   const read: Accessor<T> = () => readSignal(signal);
   const write = ((next: unknown) => {
     const resolved = (

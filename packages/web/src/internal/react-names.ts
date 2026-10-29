@@ -43,11 +43,7 @@ export function attributeName(name: string, svg: boolean): string {
 }
 
 /** Props that have no DOM form: a spread ignores them (React's `key` and hydration flags). @internal */
-export const IGNORED_KEYS: ReadonlySet<string> = new Set([
-  "key",
-  "suppressHydrationWarning",
-  "suppressContentEditableWarning",
-]);
+export const IGNORED_KEYS: RegExp = /^(?:key|suppress(?:Hydration|ContentEditable)Warning)$/;
 
 /** The DOM event for a React-spelled prop (see the compiler's `eventPlan`). @internal */
 export interface EventPlan {
@@ -63,7 +59,7 @@ const REACT_EVENTS: ReadonlyMap<string, string> = new Map([
   ["doubleclick", "dblclick"],
 ]);
 
-const CHANGE_ON_TYPES: ReadonlySet<string> = new Set(["checkbox", "radio", "file"]);
+const CHANGE_ON_TYPES = /^(?:checkbox|radio|file)$/;
 
 /**
  * Plans the DOM event for an `on*` prop. React's spellings follow React: `onChange` is the per-edit
@@ -80,10 +76,34 @@ export function eventPlan(attribute: string, tag: string, type: string | null): 
   if (reactSpelling) {
     planned =
       lower === "change"
-        ? tag === "textarea" || (tag === "input" && (type === null || !CHANGE_ON_TYPES.has(type)))
+        ? tag === "textarea" || (tag === "input" && (type === null || !CHANGE_ON_TYPES.test(type)))
           ? "input"
           : "change"
         : (REACT_EVENTS.get(lower) ?? lower);
   }
   return { type: planned, capture, passive: reactSpelling && lower === "wheel" && !capture };
+}
+
+/**
+ * Boolean attributes that a props object writes as presence flags (`disabled: true` gives a bare
+ * `disabled`). Lower-case names only. The server and the client share this test, so a value that
+ * renders a flag on one side renders it on the other. One space-separated string, not a set of
+ * strings, because every bundle that spreads props carries it. A name with a space in it can match
+ * two neighbors, but such a name is not a valid attribute name and both renderers refuse it before
+ * they write anything.
+ */
+const BOOLEAN_ATTRIBUTES =
+  " async autofocus autoplay checked controls default defer disabled formnovalidate hidden inert " +
+  "ismap loop multiple muted nomodule novalidate open playsinline readonly required reversed selected ";
+
+/**
+ * True when a prop written under attribute name `name` is a presence flag for `value`: one of the
+ * boolean attributes, except `hidden="until-found"`, a keyword that only collapses the element
+ * (a bare `hidden` would hide it). The client writes the flag with truthiness, as the server does.
+ * @internal
+ */
+export function isFlagAttribute(name: string, value: unknown): boolean {
+  return (
+    BOOLEAN_ATTRIBUTES.includes(` ${name} `) && !(name === "hidden" && value === "until-found")
+  );
 }

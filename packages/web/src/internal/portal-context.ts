@@ -12,6 +12,15 @@ export interface PortalSink {
    * render.
    */
   add(key: string, html: string): void;
+  /**
+   * Renders a `Portal`'s content into this sink under hydration key `key`. The collectors the
+   * renderers provide have it; `Portal` calls it instead of importing the markup writer, so the
+   * browser bundle of an app that uses `Portal` does not carry server rendering code. A sink without
+   * it receives nothing from `Portal`.
+   * @param key The portal's key, `undefined` when the render has no scope (nothing is written).
+   * @param children Reads the content: a thunk, because it must be built inside the portal's scope.
+   */
+  render?(key: string | undefined, children: () => unknown): void;
 }
 
 /**

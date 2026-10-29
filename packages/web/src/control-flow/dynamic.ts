@@ -3,7 +3,7 @@ import { createComponent } from "../component";
 import { bindRegion, claims, createRegion, MATHML_NS, nextKey, SVG_NS, warnOnce } from "../extend";
 import { ssrElement, ssrRaw } from "../server/element";
 import { isTextOnlyElement } from "../server/raw-text";
-import { spread } from "../spread";
+import { spreadProps } from "../spread";
 
 /**
  * A component function or a tag name, as {@link Dynamic} accepts it. The props of a function are
@@ -116,7 +116,7 @@ function buildElement(tag: string, props: object): unknown {
   }
   const el = claims.current.claimElement(nextKey()) ?? createTagged(tag);
   // Attributes through spread; children through insert, which adopts the server's children region.
-  spread(el, props, el.namespaceURI === SVG_NS, true);
+  spreadProps(el, props, el.namespaceURI === SVG_NS);
   const region = createRegion(el, null, claims.current.takeRegion(el, null));
   bindRegion(region, () => (props as { children?: unknown }).children);
   return el;

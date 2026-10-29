@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.3
+
+### Fixed
+
+- `ViewTransition` applies its name and class again when its content changes (a `Show` that opens, a fallback replaced by content), not only when `name` or `class` change.
+- `insert` reads the children of a `DocumentFragment` once, so an array or accessor that holds the same fragment keeps its nodes when it runs again.
+- `className`, `classList` and `style` call accessors (as array items, object values, style values and nested accessors) like the server does, so `["a", () => "b"]` is `a b` on both sides.
+- `Portal` builds its children once and moves the same nodes and effects when a reactive `mount` changes, so an input keeps its text and a component is not disposed and rebuilt (`moveRegion` is added to `@shadow-js/web/extend`).
+- `ssrElement` writes the extra line break after `<pre>` and `<listing>` (as it already did for `<textarea>`) when the content starts with one, so the parser does not drop it.
+- Boolean attributes written from a props object (`spread`, `element`) follow the rule the server uses: `disabled: 0`, `hidden: ""` or `required: NaN` write no attribute, so hydration no longer gives a disabled button the server did not render (`hidden="until-found"` stays a keyword).
+- A `<select>` driven by `spread` keeps its `value` when its `children` options change: the value is applied again after each commit of the options, as the compiled path does.
+- `<Dynamic component="select" value={...}>` selects its value once its options exist and again whenever new options replace the old ones; it used to show the first option.
+- Client bundles that use `Portal` no longer carry the server markup writer, and props spreads and `Dynamic` are smaller.
+
 ## 1.0.2
 
 ### Fixed

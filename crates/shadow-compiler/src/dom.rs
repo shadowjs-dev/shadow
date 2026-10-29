@@ -10,7 +10,7 @@ use crate::ctx::Ctx;
 use crate::error::{Result, fail_at};
 use crate::ir::{Attr, ChildIR, ComponentIR, ElementIR, ExprIR, Namespace, RootIR, StaticValue};
 use crate::jsutil::{json_string, utf16_len};
-use crate::names::{attribute_name, event_plan};
+use crate::names::{attribute_name, event_plan, is_event_handler_attribute};
 use crate::registry::Registry;
 use crate::text::{escape_html_attribute, escape_html_text, property_key};
 use crate::tree::{NodeIx, Ty};
@@ -78,6 +78,44 @@ const PROPERTIES: &[&str] = &[
     "innerHTML",
     "textContent",
     "innerText",
+];
+
+/// The HTML elements that have a DOM property of [`PROPERTIES`]. A name that is not here is on every
+/// HTML element (`hidden`, `inert`, `autofocus`, `innerHTML`, ...). On any other element the name is an
+/// attribute: assigning the property would only set an expando the markup never shows, and `value` on
+/// `li` is a number property that would turn `undefined` into `0`.
+const PROPERTY_TAGS: &[(&str, &[&str])] = &[
+    (
+        "value",
+        &[
+            "button", "data", "input", "meter", "option", "output", "param", "progress", "select",
+            "textarea",
+        ],
+    ),
+    ("defaultValue", &["input", "output", "select", "textarea"]),
+    ("checked", &["input"]),
+    ("defaultChecked", &["input"]),
+    ("indeterminate", &["input"]),
+    ("selected", &["option"]),
+    ("muted", &["audio", "video"]),
+    ("autoplay", &["audio", "video"]),
+    ("controls", &["audio", "video"]),
+    ("loop", &["audio", "video"]),
+    ("playsInline", &["video"]),
+    (
+        "disabled",
+        &[
+            "button", "fieldset", "input", "link", "optgroup", "option", "select", "style",
+            "textarea",
+        ],
+    ),
+    ("readOnly", &["input", "textarea"]),
+    ("required", &["input", "select", "textarea"]),
+    ("multiple", &["input", "select"]),
+    ("open", &["details", "dialog"]),
+    ("noValidate", &["form"]),
+    ("formNoValidate", &["button", "input"]),
+    ("reversed", &["ol"]),
 ];
 
 /// Properties that must be applied after children exist (`<select value>`), and read back safely.
@@ -197,11 +235,14 @@ impl<'t, 'a> Ctx<'t, 'a> {
         }
     }
 
-    /// Wraps text that would read as a block or a comma list in parentheses.
+    /// Wraps text that an arrow function body or a statement would read as a block or a comma list in
+    /// parentheses: an object literal, a sequence, and anything else that starts with a brace
+    /// (`{ a: 1 }[key]`).
     pub(crate) fn wrap_object_literal<'s>(&self, text: &'s str, node: NodeIx) -> Cow<'s, str> {
         let inner = unwrap_parens(self.tree, node);
         match self.tree.ty(inner) {
             Ty::ObjectExpression | Ty::SequenceExpression => Cow::Owned(format!("({text})")),
+            _ if text.starts_with('{') => Cow::Owned(format!("({text})")),
             _ => Cow::Borrowed(text),
         }
     }
@@ -313,7 +354,7 @@ impl<'t, 'a> Ctx<'t, 'a> {
     }
 
     /// True when a `ref` target is a name that cannot be assigned.
-    fn is_constant_ref(&self, node: NodeIx) -> bool {
+    pub(crate) fn is_constant_ref(&self, node: NodeIx) -> bool {
         let target = unwrap_parens(self.tree, node);
         match self.tree.node(target).kind {
             AstKind::IdentifierReference(identifier) => {
@@ -323,7 +364,7 @@ impl<'t, 'a> Ctx<'t, 'a> {
         }
     }
 
-    fn ref_statement(&mut self, text: &str, node: NodeIx, constant: bool) -> String {
+    pub(crate) fn ref_statement(&mut self, text: &str, node: NodeIx, constant: bool) -> String {
         let target = unwrap_parens(self.tree, node);
         let assignable =
             !constant && matches!(self.tree.ty(target), Ty::Identifier | Ty::MemberExpression);
@@ -611,7 +652,7 @@ impl<'t, 'a> Ctx<'t, 'a> {
                 Attr::Static {
                     name, value, start, ..
                 } => {
-                    if is_event_attribute(name) && matches!(value, StaticValue::Text(_)) {
+                    if is_event_handler_attribute(name) && matches!(value, StaticValue::Text(_)) {
                         return fail_at(
                             "STRING_EVENT_HANDLER",
                             format!("\"{name}\" received a string. Pass a function instead."),
@@ -665,7 +706,14 @@ impl<'t, 'a> Ctx<'t, 'a> {
                 );
             };
             let rest = element.attrs.get(spread_at..).unwrap_or(&[]);
-            let segments = self.prop_entries(rest, &[], element.start)?;
+            // The spread's runtime does not know `on:`, `use:`, `class:` and `style:`: those are
+            // compiled as directives, after the spread, as they are when written before it.
+            let plain: Vec<Attr> = rest
+                .iter()
+                .filter(|attr| !is_spread_directive(attr))
+                .cloned()
+                .collect();
+            let segments = self.prop_entries(&plain, &[], element.start)?;
             let parts = segment_parts(&segments);
             let props = if parts.len() == 1 {
                 parts[0].clone()
@@ -677,6 +725,9 @@ impl<'t, 'a> Ctx<'t, 'a> {
             block.ops.push(format!(
                 "{spread}({var}, {props}, {is_svg}, {has_children});"
             ));
+            for directive in rest.iter().filter(|attr| is_spread_directive(attr)) {
+                self.gen_expr_attr(element, directive, var, block, &mut post, is_svg)?;
+            }
         }
         Ok((html, post))
     }
@@ -718,7 +769,9 @@ impl<'t, 'a> Ctx<'t, 'a> {
             && name != "ref"
             && name != "children"
             && !is_event_attribute(&name)
-            && !has_code_prefix(&name);
+            // A function given to a property or an attribute directive is the value, not an accessor.
+            && !has_code_prefix(&name)
+            && !is_custom_property(element, &name, is_svg);
         let replaced: Option<ExprIR> = maybe_accessor.then(|| ExprIR {
             text: Cow::Owned(format!(
                 "(typeof {t} === \"function\" ? {t}() : {t})",
@@ -868,7 +921,7 @@ impl<'t, 'a> Ctx<'t, 'a> {
             block.ops.push(format!("{call}({var}, {text});"));
             return Ok(());
         }
-        if PROPERTIES.contains(&name.as_str()) && !is_svg && element.tag != "svg" {
+        if assigns_property(element, &name) {
             // A select's value may be an array (`multiple`): a helper selects the options it lists.
             let assignment =
                 if (name == "value" || name == "defaultValue") && element.tag == "select" {
@@ -886,7 +939,7 @@ impl<'t, 'a> Ctx<'t, 'a> {
             }
             return Ok(());
         }
-        if element.custom {
+        if element.custom && !name.contains('-') {
             let statement = self.run(dynamic, format!("{var}[{}] = {text};", json_string(&name)));
             block.ops.push(statement);
             return Ok(());
@@ -1377,7 +1430,55 @@ fn is_xlink_camel(name: &str) -> bool {
         .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_uppercase()))
 }
 
-/// `/^(?:use|on|oncapture):/`.
+/// `/^(?:use|on|oncapture|prop|attr):/`.
 fn has_code_prefix(name: &str) -> bool {
-    name.starts_with("use:") || name.starts_with("on:") || name.starts_with("oncapture:")
+    name.starts_with("use:")
+        || name.starts_with("on:")
+        || name.starts_with("oncapture:")
+        || name.starts_with("prop:")
+        || name.starts_with("attr:")
+}
+
+/// True for `on:x`, `oncapture:x`, `use:x`, `class:x` and `style:x`: the attribute namespaces the
+/// runtime spread cannot apply, so the compiler binds them itself.
+pub(crate) fn is_spread_directive(attr: &Attr) -> bool {
+    match attr {
+        Attr::Expr { name, .. } => name.split_once(':').is_some_and(|(namespace, _)| {
+            matches!(namespace, "on" | "oncapture" | "use" | "class" | "style")
+        }),
+        _ => false,
+    }
+}
+
+/// True when a custom element gets this attribute as a property (`el.items = value`): every name that
+/// has no markup meaning of its own. A hyphenated name (`data-x`, `aria-label`) is an attribute.
+fn is_custom_property(element: &ElementIR, name: &str, svg: bool) -> bool {
+    element.custom
+        && !svg
+        && !name.contains('-')
+        && !name.contains(':')
+        && !PROPERTIES.contains(&name)
+        && !matches!(
+            name,
+            "class" | "className" | "classList" | "style" | "autoFocus"
+        )
+        && !is_event_attribute(name)
+}
+
+/// True when `name` is assigned as a DOM property on this element (see [`PROPERTY_TAGS`]).
+fn assigns_property(element: &ElementIR, name: &str) -> bool {
+    if !PROPERTIES.contains(&name) || element.ns == Namespace::Svg {
+        return false;
+    }
+    // A custom element declares its own properties: the names are assigned as they are.
+    if element.custom {
+        return true;
+    }
+    if element.ns != Namespace::Html {
+        return false;
+    }
+    match PROPERTY_TAGS.iter().find(|(property, _)| *property == name) {
+        Some((_, tags)) => tags.contains(&element.tag.as_str()),
+        None => true,
+    }
 }

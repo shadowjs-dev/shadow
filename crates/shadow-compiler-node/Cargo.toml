@@ -17,6 +17,8 @@ crate-type = ["cdylib"]
 shadow-compiler = { path = "../shadow-compiler" }
 napi = { version = "=3.14.2", default-features = false, features = ["napi6"] }
 napi-derive = "=3.6.12"
+
+[target.'cfg(not(target_vendor = "apple"))'.dependencies]
 mimalloc.workspace = true
 
 [build-dependencies]

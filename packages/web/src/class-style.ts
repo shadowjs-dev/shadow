@@ -1,47 +1,38 @@
+import { leaves, unwrap } from "./internal/accessor";
 import { cssValueText } from "./internal/css-units";
 import { HTML_NS } from "./internal/names";
 
+/** `map` itself, or a copy in which accessor values are resolved, so a later diff compares what was applied. */
+function resolveMap(map: Record<string, unknown>): Record<string, unknown> {
+  let out = map;
+  for (const key of Object.keys(map)) {
+    if (typeof map[key] !== "function") continue;
+    if (out === map) out = { ...map };
+    out[key] = unwrap(map[key]);
+  }
+  return out;
+}
+
 /** Appends the truthy class names of `value` (strings, numbers, nested arrays, objects) to `parts`. */
 function collectClasses(root: unknown, parts: string[]): void {
-  // Explicit frames instead of recursion: array nesting depth is controlled by the user.
-  const frames: unknown[][] = [[root]];
-  const cursors: number[] = [0];
-  const active = new Set<unknown[]>();
-  while (frames.length > 0) {
-    const top = frames.length - 1;
-    const frame = frames[top];
-    const cursor = cursors[top] ?? 0;
-    if (frame === undefined || cursor >= frame.length) {
-      const done = frames.pop();
-      if (done !== undefined) active.delete(done);
-      cursors.pop();
-      continue;
-    }
-    cursors[top] = cursor + 1;
-    const item = frame[cursor];
-    if (Array.isArray(item)) {
-      if (active.has(item))
-        throw new TypeError(
-          __DEV__ ? "className(): a class array contains itself." : "SHADOW_CLASS_CYCLE",
-        );
-      active.add(item);
-      frames.push(item);
-      cursors.push(0);
-    } else if (typeof item === "string") {
+  const cycle = __DEV__ ? "className(): a class array contains itself." : "SHADOW_CLASS_CYCLE";
+  for (const item of leaves(root, cycle)) {
+    if (typeof item === "string") {
       if (item !== "") parts.push(item);
     } else if (typeof item === "number") {
       if (item !== 0 && !Number.isNaN(item)) parts.push(String(item));
     } else if (item !== null && typeof item === "object") {
       const record = item as Record<string, unknown>;
       for (const key of Object.keys(record)) {
-        if (record[key] && key !== "") parts.push(key);
+        if (unwrap(record[key]) && key !== "") parts.push(key);
       }
     }
   }
 }
 
 /** Class text for `value`, or null when the class attribute must be removed. */
-function classText(value: unknown): string | null {
+function classText(input: unknown): string | null {
+  const value = unwrap(input);
   if (typeof value === "string") return value;
   if (value === null || value === undefined || value === false) return null;
   const parts: string[] = [];
@@ -76,9 +67,11 @@ export function applyClass(el: Element, value: unknown, svg: boolean): void {
  * @param el Target element.
  * @param value A string is used as is. Arrays and objects are clsx-style: non-empty strings,
  * numbers other than `0` and `NaN`, nested arrays, and the keys of objects whose value is truthy,
- * joined with spaces. `null`, `undefined` and `false` remove the attribute.
+ * joined with spaces. `null`, `undefined` and `false` remove the attribute. Accessors, also inside
+ * arrays and as object values, are called (as on the server); the signals they read are tracked by
+ * the effect that applies the class.
  * @throws TypeError `SHADOW_CLASS_CYCLE` when an array contains itself (directly or through a nested
- * array).
+ * array), and `SHADOW_INSERT_DEPTH` when an accessor returns accessors more than 10,000 levels deep.
  * @example
  * import { className } from "@shadow-js/web";
  *
@@ -110,10 +103,12 @@ function enabled(map: Record<string, unknown>, key: string): boolean {
  * disappeared from `value` are switched off.
  *
  * @param el Target element.
- * @param value Map from class names to truthiness. `undefined` switches off every class `prev` had on.
+ * @param value Map from class names to truthiness; a value that is an accessor is called. `undefined`
+ * switches off every class `prev` had on.
  * @param prev The map returned by the previous call. Undefined (the first call) means no class was
  * on yet.
- * @returns The map now in effect (`value`, or `{}` for undefined), to pass back as `prev` next time.
+ * @returns The map now in effect (`value`, or `{}` for undefined; a copy with the accessors resolved
+ * when `value` has any), to pass back as `prev` next time.
  * @example
  * import { classList } from "@shadow-js/web";
  *
@@ -128,7 +123,7 @@ export function classList(
   value: Record<string, unknown> | undefined,
   prev?: Record<string, unknown>,
 ): Record<string, unknown> {
-  const next: Record<string, unknown> = value ?? {};
+  const next = resolveMap(value ?? {});
   const before: Record<string, unknown> = prev ?? {};
   const keys = new Set([...Object.keys(before), ...Object.keys(next)]);
   for (const key of keys) {
@@ -193,7 +188,8 @@ export function setStyleProperty(el: HTMLElement | SVGElement, name: string, val
  * @param value An object of properties (camelCase, kebab-case or custom names). A string replaces
  * `cssText`. An array of strings and objects (not nested; `null`, `undefined`, `false` and `""`
  * items are skipped) is written in order, so a later declaration wins, exactly as `ssrStyle` writes it
- * on the server. `null`, `undefined` and `false` remove the `style` attribute.
+ * on the server. `null`, `undefined` and `false` remove the `style` attribute. Accessors (the value,
+ * array items and property values) are called, as on the server.
  * @param prev The value returned by the previous call. Undefined (the first call) diffs against an
  * empty style. When it is a string or an array, `cssText` is cleared before the object is written.
  * @returns What to pass back as `prev` next time: a shallow copy of an object value, otherwise
@@ -210,19 +206,21 @@ export function setStyleProperty(el: HTMLElement | SVGElement, name: string, val
  * @since 1.0.0
  */
 export function style(el: HTMLElement | SVGElement, value: unknown, prev?: unknown): unknown {
-  if (value === null || value === undefined || value === false) {
+  const resolved = unwrap(value);
+  if (resolved === null || resolved === undefined || resolved === false) {
     el.removeAttribute("style");
-    return value;
+    return resolved;
   }
-  if (typeof value !== "object") {
-    el.style.cssText = String(value);
-    return value;
+  if (typeof resolved !== "object") {
+    el.style.cssText = String(resolved);
+    return resolved;
   }
-  if (Array.isArray(value)) {
+  if (Array.isArray(resolved)) {
     // Not diffed: a string in the array can set any property, so the whole style is written again, in
     // order (a later declaration wins, as on the server).
     el.style.cssText = "";
-    for (const item of value) {
+    for (const source of resolved) {
+      const item = unwrap(source);
       if (typeof item === "string") {
         el.style.cssText += `;${item}`;
       } else if (item !== null && item !== undefined && item !== false) {
@@ -234,9 +232,9 @@ export function style(el: HTMLElement | SVGElement, value: unknown, prev?: unkno
         style(el, item, {});
       }
     }
-    return value;
+    return resolved;
   }
-  const next = { ...(value as Record<string, unknown>) };
+  const next = resolveMap({ ...(resolved as Record<string, unknown>) });
   const before = asRecord(prev) ?? {};
   // What a string or an array wrote is unknown, so it is cleared before the object is written.
   if (typeof prev === "string" || Array.isArray(prev)) el.style.cssText = "";

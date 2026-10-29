@@ -2,7 +2,7 @@ import { DEVTOOLS_EVENT, report } from "./devtools";
 import { ShadowError, warn } from "./diagnostics";
 import { DIRTY, FLAG_DISPOSED, FLAG_PARKED, FLAG_QUEUED, FLAG_TRANSITION } from "./flags";
 import type { Computation } from "./graph";
-import { recompute, updateIfNecessary } from "./graph";
+import { recompute, refreshAncestors, updateIfNecessary } from "./graph";
 import { handleError } from "./owner";
 import { clearQueues, hasPending, renderQueue, userQueue } from "./queue";
 import { rt } from "./state";
@@ -23,6 +23,22 @@ export function byCreation(a: Computation, b: Computation): number {
   return a.depth - b.depth || a.seq - b.seq;
 }
 
+/**
+ * Runs one queued effect. Its stale owners come first: an owner that is about to re-run disposes the
+ * effect, and running it before (a zombie, G-17) would read state that is already out of date.
+ * @internal
+ */
+export function runQueued(effect: Computation): void {
+  try {
+    if (!refreshAncestors(effect)) return;
+    // A directly dirtied effect needs no source verification: skip the frame machinery.
+    if (effect.state === DIRTY) recompute(effect);
+    else updateIfNecessary(effect);
+  } catch (error) {
+    handleError(error, effect);
+  }
+}
+
 /** Runs every queued effect of one phase, parents before children, siblings by creation. */
 function drain(queue: Computation[]): number {
   const batch = queue.splice(0, queue.length);
@@ -36,13 +52,7 @@ function drain(queue: Computation[]): number {
       effect.flags = (effect.flags & ~FLAG_TRANSITION) | FLAG_PARKED;
       continue;
     }
-    try {
-      // A directly dirtied effect needs no source verification: skip the frame machinery.
-      if (effect.state === DIRTY) recompute(effect);
-      else updateIfNecessary(effect);
-    } catch (error) {
-      handleError(error, effect);
-    }
+    runQueued(effect);
   }
   return batch.length;
 }

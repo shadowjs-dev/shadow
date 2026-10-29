@@ -10,8 +10,8 @@ import {
 import {
   type BoundaryHold,
   createOwner,
-  createSignalNode,
   readSignal,
+  SignalNode,
   transitionHooks,
   writeSignal,
 } from "@shadow-js/core/extend";
@@ -57,7 +57,7 @@ interface Tracking {
 function createTracker(): Tracking {
   // Counted with an extension-API cell: a resource may be read (and so hold this boundary) while a
   // memo computes, where a plain write would be rejected.
-  const pending = createSignalNode<number>(0, Object.is);
+  const pending = new SignalNode<number>(0, Object.is);
   // The hold a transition takes on this boundary. Only a transition read creates it (core keeps the
   // machinery of holds behind its transition hooks); the boundary's memo reads the count before it
   // reads the hold, so it runs again when the count reaches zero (the release).

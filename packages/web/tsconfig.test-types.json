@@ -9,5 +9,5 @@
       "@shadow-js/web": ["./src/index.ts"]
     }
   },
-  "include": ["test-types"]
+  "include": ["test-types", "../../types"]
 }

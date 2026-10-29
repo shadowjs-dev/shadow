@@ -1,6 +1,6 @@
 {
   "name": "@shadow-js/web",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "A DOM renderer with no virtual DOM, plus control flow, server rendering and hydration",
   "license": "MIT",
   "type": "module",
@@ -106,10 +106,10 @@
   },
   "scripts": {
     "build": "tsdown --config-loader native",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test-types.json"
   },
   "peerDependencies": {
-    "@shadow-js/core": "^1.0.2"
+    "@shadow-js/core": "^1.0.3"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",

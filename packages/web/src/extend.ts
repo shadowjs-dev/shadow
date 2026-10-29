@@ -9,7 +9,7 @@
  */
 export { isUnsafeUrlAttribute } from "./attributes";
 export { element } from "./element";
-export { bindRegion, createRegion, type Region, removeRegion } from "./insert";
+export { bindRegion, createRegion, moveRegion, type Region, removeRegion } from "./insert";
 export {
   claimElement,
   claimPortal,

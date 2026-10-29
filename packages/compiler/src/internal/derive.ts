@@ -171,15 +171,21 @@ function references(
       const param = at(node, "param");
       if (param !== null) collectBindingNames(param, names, redeclared);
     }
-    if (node.type === "Identifier" && parent !== null) {
+    if ((node.type === "Identifier" || node.type === "JSXIdentifier") && parent !== null) {
       const name = str(node, "name");
-      if (name !== undefined && names.has(name) && isReference(node, parent)) {
+      // `<ui.Button />` reads `ui`; a bare `<ui>` is an element and `ui=` an attribute name.
+      const read =
+        node.type === "JSXIdentifier"
+          ? parent.type === "JSXMemberExpression" && at(parent, "object") === node
+          : isReference(node, parent);
+      if (name !== undefined && names.has(name) && read) {
         const entry: Reference & { inClosure: boolean; inJsx: boolean } = {
           node,
           parent,
           callee: parent.type === "CallExpression" && at(parent, "callee") === node,
           inClosure: closure,
-          inJsx: jsx,
+          // A tag is part of the JSX, whatever encloses it.
+          inJsx: jsx || node.type === "JSXIdentifier",
         };
         const bucket = refs.get(name);
         if (bucket === undefined) refs.set(name, [entry]);

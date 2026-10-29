@@ -55,6 +55,10 @@ export class PortalCollector implements PortalSink {
     this.entries.clear();
   }
 
+  render(key: string | undefined, children: () => unknown): void {
+    renderServerPortal(key, children, this);
+  }
+
   html(): string {
     let out = "";
     for (const [key, html] of this.entries) {

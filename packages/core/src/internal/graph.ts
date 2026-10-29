@@ -15,7 +15,14 @@ import {
   KIND_MEMO,
   KIND_SIGNAL,
 } from "./flags";
-import { addCleanup, disposeChildren, handleError, hasErrorHandler, Owner } from "./owner";
+import {
+  addCleanup,
+  disposeChildren,
+  finishDisposal,
+  handleError,
+  hasErrorHandler,
+  Owner,
+} from "./owner";
 import { enqueue } from "./queue";
 import { nextSequence, rt } from "./state";
 import type { Cleanup, Equals } from "./types";
@@ -100,7 +107,7 @@ export class Signal<T = unknown> implements Source {
    * @param equals Equality that decides whether a write is a change.
    * @param name Devtools label, or undefined for an unnamed signal.
    */
-  constructor(value: T, equals: Equals<T>, name: string | undefined) {
+  constructor(value: T, equals: Equals<T>, name?: string) {
     this.value = value;
     this.equals = equals;
     this.name = name;
@@ -205,7 +212,7 @@ export class Computation extends Owner implements Source {
 
   protected override release(): void {
     this.flags |= FLAG_DISPOSED;
-    unlinkSources(this);
+    unlinkFrom(this, 0);
     this.fn = null;
     this.apply = null;
   }
@@ -421,8 +428,7 @@ export function isFrozen(node: Computation): boolean {
 export function markObservers(source: Source): void {
   staleObservers(source.observers, DIRTY);
   while (markStack.length > 0) {
-    const node = markStack.pop();
-    if (node !== undefined) staleObservers(node.observers, CHECK);
+    staleObservers((markStack.pop() as Computation).observers, CHECK);
   }
 }
 
@@ -453,24 +459,20 @@ export function updateIfNecessary(root: Computation, eagerSources = false): void
   try {
     while (frameTop > base) {
       const at = frameTop - 1;
-      const node = frameNodes[at];
-      if (node === undefined) break;
+      const node = frameNodes[at] as Computation;
       if (node.state === CHECK || (node.state === DIRTY && eagerSources)) {
         const sources = node.sources;
-        let cursor = frameIndex[at] ?? 0;
+        let cursor = frameIndex[at] as number;
         let descended = false;
         while (cursor < sources.length) {
           const source = sources[cursor] as Source;
           cursor += 2;
           if (source.kind === KIND_SIGNAL) continue;
           const dependency = source as Computation;
-          if (dependency.state === CLEAN || (dependency.flags & FLAG_DISPOSED) !== 0) continue;
-          if (isFrozen(dependency)) continue;
+          if (!needsUpdate(dependency)) continue;
           if ((dependency.flags & FLAG_RUNNING) !== 0) throw new ShadowError("CYCLE_DETECTED");
           // An owner that is about to re-run would dispose this dependency: update it first.
-          refreshAncestors(dependency);
-          if (dependency.state === CLEAN || (dependency.flags & FLAG_DISPOSED) !== 0) continue;
-          if (isFrozen(dependency)) continue;
+          if (!refreshAncestors(dependency)) continue;
           frameIndex[at] = cursor;
           frameNodes[frameTop] = dependency;
           frameIndex[frameTop] = 0;
@@ -489,8 +491,7 @@ export function updateIfNecessary(root: Computation, eagerSources = false): void
   } finally {
     // An exception leaves frames on the stack: they must not stay marked as being refreshed.
     for (let i = base; i < frameTop; i += 1) {
-      const pending = frameNodes[i];
-      if (pending !== undefined) pending.flags &= ~FLAG_REFRESHING;
+      (frameNodes[i] as Computation).flags &= ~FLAG_REFRESHING;
     }
     frameNodes.length = base;
     frameIndex.length = base;
@@ -498,29 +499,35 @@ export function updateIfNecessary(root: Computation, eagerSources = false): void
   }
 }
 
+/** True when `node` is stale, alive and not frozen: running it now is both possible and needed. */
+function needsUpdate(node: Computation): boolean {
+  return node.state !== CLEAN && (node.flags & FLAG_DISPOSED) === 0 && !isFrozen(node);
+}
+
 /**
  * Brings stale owners of `node` up to date, topmost first. An owner that is about to re-run will
  * dispose `node`; computing `node` first would run it with state that is already out of date
  * (a zombie, G-17). Iterative: the owner chain depth is user controlled.
+ *
+ * @returns Whether `node` still needs updating afterward (an owner's run may have cleaned or disposed it).
  */
-function refreshAncestors(node: Computation): void {
+export function refreshAncestors(node: Computation): boolean {
+  if (!needsUpdate(node)) return false;
   const stale: Computation[] = [];
   for (let owner = node.parent; owner !== null; owner = owner.parent) {
-    if (!(owner instanceof Computation)) continue;
     if (
+      owner instanceof Computation &&
       owner.state !== CLEAN &&
-      (owner.flags & (FLAG_RUNNING | FLAG_DISPOSED | FLAG_REFRESHING)) === 0 &&
-      !isFrozen(owner)
+      (owner.flags & (FLAG_RUNNING | FLAG_REFRESHING)) === 0
     ) {
       stale.push(owner);
     }
   }
   for (let i = stale.length - 1; i >= 0; i -= 1) {
-    const ancestor = stale[i];
-    if (ancestor !== undefined && (ancestor.flags & FLAG_DISPOSED) === 0) {
-      updateIfNecessary(ancestor);
-    }
+    const ancestor = stale[i] as Computation;
+    if (needsUpdate(ancestor)) updateIfNecessary(ancestor);
   }
+  return needsUpdate(node);
 }
 
 /**
@@ -545,11 +552,8 @@ export function readSignal<T>(signal: Signal<T>): T {
 /** Reads a memo: refreshes it if stale, tracks it, rethrows its stored error. */
 export function readMemo<T>(memo: Computation): T {
   if ((memo.flags & FLAG_RUNNING) !== 0) throw new ShadowError("CYCLE_DETECTED");
-  if (memo.state !== CLEAN && (memo.flags & FLAG_DISPOSED) === 0 && !isFrozen(memo)) {
-    refreshAncestors(memo);
-    if ((memo.flags & FLAG_DISPOSED) === 0) {
-      updateIfNecessary(memo, rt.recomputeDepth >= DEEP_LIMIT);
-    }
+  if (memo.state !== CLEAN && refreshAncestors(memo)) {
+    updateIfNecessary(memo, rt.recomputeDepth >= DEEP_LIMIT);
   }
   if (rt.listener !== null) track(memo);
   if ((memo.flags & FLAG_HAS_ERROR) !== 0) throw memo.error;
@@ -560,8 +564,15 @@ export function readMemo<T>(memo: Computation): T {
 export function recompute(node: Computation): void {
   const fn = node.fn;
   if (fn === null) return;
-  disposeChildren(node);
-  node.runCleanups();
+  // One disposal for the children and the cleanups: all of them run even when one throws (the errors
+  // are held in rt.uncaught), and the node still re-runs (it would stay dirty otherwise).
+  rt.disposing += 1;
+  try {
+    disposeChildren(node);
+    node.runCleanups();
+  } finally {
+    rt.disposing -= 1;
+  }
   // Edges are kept and re-confirmed in order while the function runs (see track()).
   node.trackIndex = 0;
   // Each run starts from a clean slate: handlers, ids and child indices belong to one run.
@@ -614,6 +625,9 @@ export function recompute(node: Computation): void {
       sourcesOf(node),
     );
   }
+  // The teardown's errors are thrown once the run is settled (unless a flush or an outer disposal collects them).
+  rt.disposing += 1;
+  finishDisposal();
 }
 
 /**

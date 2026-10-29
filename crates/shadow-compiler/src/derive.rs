@@ -382,12 +382,19 @@ fn references<'a>(tree: &Tree<'a>, root: NodeIx, names: &FxHashSet<&'a str>) -> 
         {
             collect_binding_names(tree, node + 1, names, &mut redeclared);
         }
-        if ty == Ty::Identifier
+        if matches!(ty, Ty::Identifier | Ty::JSXIdentifier)
             && let Some(parent) = parent
         {
+            // `<ui.Button />` reads `ui`; a bare `<ui>` is an element and `ui=` an attribute name.
+            let read = if ty == Ty::JSXIdentifier {
+                tree.ty(parent) == Ty::JSXMemberExpression
+                    && tree.children(parent).next() == Some(node)
+            } else {
+                is_reference(tree, node, parent)
+            };
             if let Some(name) = tree.name(node)
                 && let Some(&known) = names.get(name)
-                && is_reference(tree, node, parent)
+                && read
             {
                 let callee = matches!(tree.node(parent).kind, AstKind::CallExpression(call)
                     if ix_of_expression(&call.callee) == node);
@@ -396,7 +403,8 @@ fn references<'a>(tree: &Tree<'a>, root: NodeIx, names: &FxHashSet<&'a str>) -> 
                     parent,
                     callee,
                     in_closure: closure,
-                    in_jsx: jsx,
+                    // A tag is part of the JSX, whatever encloses it.
+                    in_jsx: jsx || ty == Ty::JSXIdentifier,
                 });
             }
             continue;

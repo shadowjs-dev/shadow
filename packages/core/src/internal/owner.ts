@@ -146,7 +146,8 @@ export class Owner {
   }
 
   /**
-   * Runs own cleanups newest first, untracked, isolating failures.
+   * Runs own cleanups newest first, untracked, isolating failures: every cleanup runs, and the errors
+   * nobody handled are thrown together afterward, unless a flush or an outer disposal collects them.
    * @internal
    */
   runCleanups(): void {
@@ -157,18 +158,21 @@ export class Owner {
     const previousListener = rt.listener;
     rt.owner = null;
     rt.listener = null;
+    // Counted as a disposal: an unhandled error is held until the last cleanup ran (a throw would skip
+    // the older ones), and a signal write is no WRITE_IN_MEMO violation (as in disposeTree).
+    rt.disposing += 1;
     try {
       if (typeof cleanups === "function") {
         runCleanup(cleanups, this);
       } else {
         for (let i = cleanups.length - 1; i >= 0; i -= 1) {
-          const cleanup = cleanups[i];
-          if (cleanup !== undefined) runCleanup(cleanup, this);
+          runCleanup(cleanups[i] as Cleanup, this);
         }
       }
     } finally {
       rt.owner = previousOwner;
       rt.listener = previousListener;
+      finishDisposal();
     }
   }
 }
@@ -221,8 +225,11 @@ export function disposeChildren(owner: Owner): void {
   }
 }
 
-/** Rethrows what disposal collected once the outermost disposal is finished. */
-function finishDisposal(): void {
+/**
+ * Rethrows what disposal collected once the outermost disposal is finished.
+ * @internal
+ */
+export function finishDisposal(): void {
   rt.disposing -= 1;
   if (rt.disposing > 0 || rt.flushing || rt.uncaught.length === 0) return;
   const errors = rt.uncaught;
@@ -286,8 +293,7 @@ export function handleError(error: unknown, from: Owner | null): void {
     const handlers = owner.errorHandlers;
     if (handlers === null) continue;
     for (let i = handlers.length - 1; i >= 0; i -= 1) {
-      const handler = handlers[i];
-      if (handler === undefined) continue;
+      const handler = handlers[i] as ErrorHandler;
       const previousListener = rt.listener;
       try {
         rt.listener = null;

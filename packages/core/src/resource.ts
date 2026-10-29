@@ -3,7 +3,6 @@ import { useRenderEffect } from "./effect";
 import {
   type Accessor,
   batch,
-  createSignalNode,
   currentListener,
   currentOwner,
   DEVTOOLS_EVENT,
@@ -11,6 +10,7 @@ import {
   holdReader,
   inTransition,
   readSignal,
+  SignalNode,
   writeSignal,
 } from "./extend";
 import { onCleanup, untrack } from "./ownership";
@@ -97,7 +97,7 @@ export interface Resource<T> extends Accessor<T | undefined> {
  * false notifies on every write, true only when the value changes.
  */
 function cell<T>(initial: T, distinct: boolean): [Accessor<T>, (next: T) => void] {
-  const node = createSignalNode<T>(initial, distinct ? Object.is : false);
+  const node = new SignalNode<T>(initial, distinct ? Object.is : false);
   return [
     () => readSignal(node),
     (next) => {

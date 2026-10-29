@@ -26,6 +26,7 @@ describe("extensibility", () => {
       "bindRegion",
       "createRegion",
       "removeRegion",
+      "moveRegion",
       "reconcileNodes",
       "claimElement",
       "takeRegion",

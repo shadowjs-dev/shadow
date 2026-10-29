@@ -137,7 +137,7 @@ describe("Portal(): mounting", () => {
     expect(second.childNodes.length).toBe(1);
   });
 
-  it("[PTL-09] a reactive child is rebuilt in the new mount and the old nodes leave", () => {
+  it("[PTL-09] a reactive child is moved to the new mount, not rebuilt, and keeps reacting there", () => {
     const first = mount("div");
     const second = mount("div");
     const [target, setTarget] = useSignal<Element>(first);
@@ -153,7 +153,7 @@ describe("Portal(): mounting", () => {
     flushSync();
     expect(first.childNodes.length).toBe(0);
     expect(second.textContent).toBe("one");
-    expect(second.firstElementChild).not.toBe(before);
+    expect(second.firstElementChild).toBe(before);
     setLabel("two");
     flushSync();
     expect(second.textContent).toBe("two");

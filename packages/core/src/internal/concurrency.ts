@@ -14,18 +14,10 @@ import {
   FLAG_TRANSITION,
   KIND_EFFECT,
 } from "./flags";
-import {
-  Computation,
-  hasObservers,
-  markObservers,
-  readSignal,
-  recompute,
-  Signal,
-  updateIfNecessary,
-} from "./graph";
-import { addCleanup, handleError, Owner } from "./owner";
+import { Computation, hasObservers, markObservers, readSignal, Signal } from "./graph";
+import { addCleanup, finishDisposal, Owner } from "./owner";
 import { clearQueues, hasPending, place, renderQueue, userQueue } from "./queue";
-import { byCreation, MAX_FLUSH_PASSES, reportUncaught, schedule } from "./scheduler";
+import { byCreation, MAX_FLUSH_PASSES, reportUncaught, runQueued, schedule } from "./scheduler";
 import {
   type BoundaryHold,
   type Hooks,
@@ -57,8 +49,7 @@ const SUSPENDED_SWEEP_AT = 64;
 function walk(root: Owner, visit: (node: Owner) => void): void {
   const stack: Owner[] = [root];
   while (stack.length > 0) {
-    const node = stack.pop();
-    if (node === undefined) break;
+    const node = stack.pop() as Owner;
     visit(node);
     for (let child = node.lastChild; child !== null; child = child.prevSibling) stack.push(child);
   }
@@ -105,12 +96,7 @@ function createHooks(): Hooks {
         effect.flags |= FLAG_PARKED | FLAG_TRANSITION;
         continue;
       }
-      try {
-        if (effect.state === DIRTY) recompute(effect);
-        else updateIfNecessary(effect);
-      } catch (error) {
-        handleError(error, effect);
-      }
+      runQueued(effect);
     }
     return batch.length;
   };
@@ -286,17 +272,29 @@ function createHooks(): Hooks {
   };
 
   const pause = (owner: Owner): void => {
+    // Every node is paused before any cleanup runs: a cleanup that throws must not leave the rest
+    // unpaused. Preorder reversed is the disposal order: children first, newest first.
+    const nodes: Owner[] = [];
     walk(owner, (node) => {
       node.pauses += 1;
-      if (
-        node instanceof Computation &&
-        node.kind === KIND_EFFECT &&
-        (node.flags & FLAG_RENDER) === 0 &&
-        !node.disposed
-      ) {
-        node.runCleanups();
-      }
+      nodes.push(node);
     });
+    rt.disposing += 1;
+    try {
+      for (let i = nodes.length - 1; i >= 0; i -= 1) {
+        const node = nodes[i];
+        if (
+          node instanceof Computation &&
+          node.kind === KIND_EFFECT &&
+          (node.flags & FLAG_RENDER) === 0 &&
+          !node.disposed
+        ) {
+          node.runCleanups();
+        }
+      }
+    } finally {
+      finishDisposal();
+    }
   };
 
   const createHold = (onSettled: () => void): TransitionHold => {

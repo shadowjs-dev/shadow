@@ -1,4 +1,4 @@
-import { useRenderEffect } from "@shadow-js/core";
+import { onCleanup, useRenderEffect } from "@shadow-js/core";
 import {
   addCleanup,
   type ComputationNode,
@@ -8,15 +8,13 @@ import {
   type Owner,
   readComputation,
 } from "@shadow-js/core/extend";
+import { leaves } from "./internal/accessor";
 import { checkClaimedText } from "./internal/claim";
 import { claims } from "./internal/hydration-hooks";
 import { reconcileNodes } from "./internal/reconcile";
 
 /** One piece of a value after flattening: a DOM node, or text to be turned into a Text node. */
 type Part = Node | string;
-
-/** Longest chain of accessors a single value may hold (a function returning a function ...). */
-const MAX_ACCESSOR_DEPTH = 10_000;
 
 /**
  * State of one dynamic child region. `nodes` are the DOM nodes the region owns, in order. When
@@ -81,44 +79,25 @@ function pruneTexts(region: Region, keep: readonly Node[]): void {
 }
 
 /**
+ * The children a fragment held when it was first inserted. Inserting empties a fragment, and an effect
+ * that runs again flattens the same fragment value once more: it must still give those nodes.
+ */
+const fragmentChildren = new WeakMap<DocumentFragment, Node[]>();
+
+/**
  * Flattens a value into parts without recursion. Functions are called (and their results unwrapped)
  * through `call`, which runs inside the render effect that owns the value, so reads are tracked.
  */
-function flatten(root: unknown, call: (fn: () => unknown) => unknown = (fn) => fn()): Part[] {
+function flatten(root: unknown, call?: (fn: () => unknown) => unknown): Part[] {
   const parts: Part[] = [];
-  const frames: unknown[][] = [[root]];
-  const cursors: number[] = [0];
-  const active = new Set<unknown[]>();
-  while (frames.length > 0) {
-    const top = frames.length - 1;
-    const frame = frames[top];
-    const cursor = cursors[top] ?? 0;
-    if (frame === undefined || cursor >= frame.length) {
-      const done = frames.pop();
-      if (done !== undefined) active.delete(done);
-      cursors.pop();
-      continue;
-    }
-    cursors[top] = cursor + 1;
-    let item: unknown = frame[cursor];
-    for (let depth = 0; typeof item === "function"; depth += 1) {
-      if (depth >= MAX_ACCESSOR_DEPTH)
-        throw new TypeError(
-          __DEV__ ? "insert(): accessor chain is too deep." : "SHADOW_INSERT_DEPTH",
-        );
-      item = call(item as () => unknown);
-    }
+  const cycle = __DEV__ ? "insert(): a value contains itself." : "SHADOW_INSERT_CYCLE";
+  for (const item of leaves(root, cycle, call)) {
     if (item === null || item === undefined || typeof item === "boolean") continue;
     if (item instanceof DocumentFragment) {
-      for (const child of item.childNodes) parts.push(child);
-    } else if (item instanceof Node) parts.push(item);
-    else if (Array.isArray(item)) {
-      if (active.has(item))
-        throw new TypeError(__DEV__ ? "insert(): a value contains itself." : "SHADOW_INSERT_CYCLE");
-      active.add(item);
-      frames.push(item);
-      cursors.push(0);
-    } else parts.push(String(item)); // strings, numbers and anything else that is text
+      const kids = fragmentChildren.get(item) ?? [...item.childNodes];
+      fragmentChildren.set(item, kids);
+      for (const child of kids) parts.push(child);
+    } else parts.push(item instanceof Node ? item : String(item)); // strings, numbers and anything else that is text
   }
   return parts;
 }
@@ -182,6 +161,23 @@ function endOf(region: Region, last: Node | undefined): Node | null {
   return marker.nextSibling;
 }
 
+/** Callbacks to run after a region of a parent has committed (see `watchCommits`). */
+const commitWatchers = new WeakMap<Node, Set<() => void>>();
+
+/**
+ * Runs `run` after every commit to a region of `parent`, so code that depends on which nodes the
+ * parent holds (a name on the first element of a content region) can follow a change of content.
+ * The watch ends with the owner that is current when this is called.
+ * @internal
+ */
+export function watchCommits(parent: Node, run: () => void): void {
+  const set = commitWatchers.get(parent) ?? new Set<() => void>();
+  commitWatchers.set(parent, set.add(run));
+  onCleanup(() => {
+    set.delete(run);
+  });
+}
+
 /** Makes the DOM show `next` for this region. */
 function reconcileRegion(region: Region, next: Node[]): void {
   const parent = region.parent;
@@ -192,6 +188,9 @@ function reconcileRegion(region: Region, next: Node[]): void {
   reconcileNodes(parent, attached, next, end);
   region.nodes = next;
   pruneTexts(region, next);
+  commitWatchers.get(parent)?.forEach((run) => {
+    run();
+  });
 }
 
 /** Applies a flattened value to a region. */
@@ -300,7 +299,7 @@ function containsFunction(root: unknown): boolean {
   const stack: unknown[][] = [root];
   const seen = new Set<unknown[]>([root]);
   while (stack.length > 0) {
-    const frame = stack.pop() ?? [];
+    const frame = stack.pop() as unknown[];
     for (const item of frame) {
       if (typeof item === "function") return true;
       if (Array.isArray(item) && !seen.has(item)) {
@@ -393,6 +392,24 @@ export function bindRegion(region: Region, value: unknown, ordered?: boolean): u
     }
   });
   return latest;
+}
+
+/**
+ * Moves a region to a new parent: its nodes still in the old parent go through `move` (which puts
+ * each at the end of `parent`), and later commits reconcile there. The region keeps its effects, so
+ * what it shows is not built again. Only for a region without an anchor.
+ * @param region The region to move.
+ * @param parent The node that receives the region's nodes.
+ * @param move Puts one node at the end of `parent` (`appendChild`, or `moveBefore` where it exists).
+ * @since 1.0.3
+ * @internal
+ */
+export function moveRegion(region: Region, parent: Node, move: (node: Node) => void): void {
+  const attached = region.nodes.filter((node) => node.parentNode === region.parent);
+  for (const node of attached) move(node);
+  // Read-only for everyone else: only a move changes where a region lives.
+  (region as { parent: Node }).parent = parent;
+  region.marker = attached[0]?.previousSibling ?? parent.lastChild;
 }
 
 /**

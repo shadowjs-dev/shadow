@@ -12,8 +12,8 @@ use oxc_ast::ast::{
 use oxc_ast::ast_kind::AstKind;
 
 use crate::classify::{
-    Constant, ConstantResult, attribute_value_ix, constant_value, is_dynamic, ix_of_expression,
-    jsx_expression_ix, node_ix, unwrap_parens, value_span,
+    Constant, ConstantResult, attribute_value_ix, constant_value, contains_jsx, is_dynamic,
+    ix_of_expression, jsx_expression_ix, node_ix, unwrap_parens, value_span,
 };
 use crate::ctx::Ctx;
 use crate::entities::decode_html_strict;
@@ -21,7 +21,7 @@ use crate::error::{Result, fail_span, unsupported};
 use crate::ir::{Attr, ChildIR, ComponentIR, ElementIR, ExprIR, Namespace, RootIR, StaticValue};
 use crate::jsutil::{first_is_upper_like, js_trim, json_string, number_to_string};
 use crate::names::{attribute_name, is_ignored_attribute};
-use crate::nesting::{nesting_problem, self_nesting_problem};
+use crate::nesting::{ancestor_problem, nesting_problem, self_nesting_problem};
 use crate::text::clean_jsx_text;
 use crate::tree::{NodeIx, Tree};
 
@@ -211,8 +211,8 @@ struct TagInfo {
 }
 
 impl<'t, 'a> Ctx<'t, 'a> {
-    fn expr(&mut self, node: NodeIx) -> Result<ExprIR<'a>> {
-        let text = self.text(node)?;
+    fn expr(&mut self, node: NodeIx, ns: Namespace) -> Result<ExprIR<'a>> {
+        let text = self.text_in(node, ns)?;
         Ok(ExprIR {
             text,
             node,
@@ -380,6 +380,8 @@ impl<'t, 'a> Ctx<'t, 'a> {
         tag: &str,
         attribute: &JSXAttribute<'a>,
         attribute_ix: NodeIx,
+        ns: Namespace,
+        risk: bool,
     ) -> Result<Attr<'a>> {
         let inner = match value {
             None => None,
@@ -399,6 +401,9 @@ impl<'t, 'a> Ctx<'t, 'a> {
                 attribute.span.end,
             );
         };
+        if risk {
+            self.capture(inner)?;
+        }
         let tree = self.tree;
         let bare = unwrap_parens(tree, inner);
         if let AstKind::ObjectExpression(object) = tree.node(bare).kind {
@@ -428,7 +433,7 @@ impl<'t, 'a> Ctx<'t, 'a> {
                 }
                 return Ok(Attr::Expr {
                     name: "innerHTML".to_string(),
-                    expr: self.expr(html)?,
+                    expr: self.expr(html, ns)?,
                     start: attribute.span.start,
                 });
             }
@@ -439,7 +444,7 @@ impl<'t, 'a> Ctx<'t, 'a> {
                 attribute.span.end,
             );
         }
-        let text = format!("({})?.__html", self.text(inner)?);
+        let text = format!("({})?.__html", self.text_in(inner, ns)?);
         Ok(Attr::Expr {
             name: "innerHTML".to_string(),
             expr: ExprIR {
@@ -457,8 +462,15 @@ impl<'t, 'a> Ctx<'t, 'a> {
         &mut self,
         attributes: &[JSXAttributeItem<'a>],
         tag: Option<&str>,
+        ns: Namespace,
     ) -> Result<Vec<Attr<'a>>> {
         let mut out = Vec::with_capacity(attributes.len());
+        // A component's props, and every prop of an element with a spread, are the entries of a props
+        // object, where a dynamic value is a getter and a `ref` is a method: `this` there is the object.
+        let risk = tag.is_none()
+            || attributes
+                .iter()
+                .any(|item| matches!(item, JSXAttributeItem::SpreadAttribute(_)));
         // An explicit `value` (or `checked`) wins over its default: one write, whichever comes first.
         let explicit = if tag.is_some() {
             explicit_names(attributes)
@@ -469,7 +481,7 @@ impl<'t, 'a> Ctx<'t, 'a> {
             let attribute = match item {
                 JSXAttributeItem::SpreadAttribute(spread) => {
                     let argument = ix_of_expression(&spread.argument);
-                    let expr = self.expr(argument)?;
+                    let expr = self.expr(argument, ns)?;
                     out.push(Attr::Spread {
                         expr,
                         start: spread.span.start,
@@ -492,7 +504,7 @@ impl<'t, 'a> Ctx<'t, 'a> {
             if let Some(tag) = tag
                 && name == "dangerouslySetInnerHTML"
             {
-                out.push(self.inner_html_attr(value, tag, attribute, attribute_ix)?);
+                out.push(self.inner_html_attr(value, tag, attribute, attribute_ix, ns, risk)?);
                 continue;
             }
             let code_only = name
@@ -528,7 +540,8 @@ impl<'t, 'a> Ctx<'t, 'a> {
                                 value_span(value).1,
                             );
                         };
-                        let expr = self.expr(inner)?;
+                        self.mark(inner, &name, risk)?;
+                        let expr = self.expr(inner, ns)?;
                         out.push(Attr::Expr { name, expr, start });
                     }
                 }
@@ -603,22 +616,40 @@ impl<'t, 'a> Ctx<'t, 'a> {
                             ));
                         }
                         _ => {
-                            let expr = self.expr(inner)?;
+                            self.mark(inner, &name, risk)?;
+                            let expr = self.expr(inner, ns)?;
                             out.push(Attr::Expr { name, expr, start });
                         }
                     }
                 }
                 Some(JSXAttributeValue::Element(element)) => {
-                    let expr = self.expr(node_ix(element.node_id()))?;
+                    let inner = node_ix(element.node_id());
+                    self.mark(inner, &name, risk)?;
+                    let expr = self.expr(inner, ns)?;
                     out.push(Attr::Expr { name, expr, start });
                 }
                 Some(JSXAttributeValue::Fragment(fragment)) => {
-                    let expr = self.expr(node_ix(fragment.node_id()))?;
+                    let inner = node_ix(fragment.node_id());
+                    self.mark(inner, &name, risk)?;
+                    let expr = self.expr(inner, ns)?;
                     out.push(Attr::Expr { name, expr, start });
                 }
             }
         }
         Ok(out)
+    }
+
+    /// Captures the `this` and `arguments` of a prop of a props object when the generated code puts it in
+    /// a getter or a method (see [`Ctx::capture`]).
+    fn mark(&mut self, inner: NodeIx, name: &str, risk: bool) -> Result<()> {
+        if risk
+            && (name == "ref"
+                || is_dynamic(self.tree, inner, self.source)
+                || contains_jsx(self.tree, inner))
+        {
+            self.capture(inner)?;
+        }
+        Ok(())
     }
 
     /// Appends a child, merging neighboring text and flattening fragments.
@@ -717,7 +748,7 @@ impl<'t, 'a> Ctx<'t, 'a> {
                     };
                     match folded {
                         None => {
-                            let expr = self.expr(inner)?;
+                            let expr = self.expr(inner, ns)?;
                             Self::push_child(&mut out, ChildIR::Slot(expr));
                         }
                         Some(text) => {
@@ -782,9 +813,27 @@ impl<'t, 'a> Ctx<'t, 'a> {
             } else {
                 Some(lower_tag.as_str())
             },
+            ns,
         )?;
         if info.component {
-            let children = self.lower_children(&element.children, ns, depth, ancestors, false)?;
+            for child in &element.children {
+                let captured = match child {
+                    JSXChild::Text(_) => None,
+                    JSXChild::Element(it) => Some(node_ix(it.node_id())),
+                    JSXChild::Fragment(it) => Some(node_ix(it.node_id())),
+                    JSXChild::ExpressionContainer(it) => Some(node_ix(it.node_id())),
+                    JSXChild::Spread(it) => Some(node_ix(it.node_id())),
+                };
+                if let Some(captured) = captured {
+                    self.capture(captured)?;
+                }
+            }
+            // The children of a component are templates of their own: `""` stops the chain of open
+            // elements that the parser would repair (`<p><Card><div/></Card></p>` is fine).
+            ancestors.push("");
+            let children = self.lower_children(&element.children, ns, depth, ancestors, false);
+            ancestors.pop();
+            let children = children?;
             return Ok(RootIR::Component(ComponentIR {
                 callee: info.name,
                 attrs,
@@ -866,11 +915,20 @@ impl<'t, 'a> Ctx<'t, 'a> {
         if let Some(problem) = self_nesting_problem(parent, ancestors) {
             return fail_span("INVALID_HTML_NESTING", problem, start, end);
         }
+        let mut chain: Vec<&str> = ancestors.to_vec();
+        chain.push(parent);
         let strict_parent = matches!(parent, "table" | "tbody" | "thead" | "tfoot" | "tr");
         for child in children {
             match child {
                 ChildIR::Element(element) => {
-                    if let Some(problem) = nesting_problem(parent, &element.tag) {
+                    let problem = nesting_problem(parent, &element.tag).or_else(|| {
+                        if element.ns == Namespace::Html {
+                            ancestor_problem(&element.tag, &chain)
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(problem) = problem {
                         return fail_span("INVALID_HTML_NESTING", problem, start, end);
                     }
                 }

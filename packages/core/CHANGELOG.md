@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.3
+
+### Fixed
+
+- A queued effect now brings its stale owners up to date first and is skipped when they dispose it, so a child effect never runs against state its parent was about to discard (also in the transition lane).
+- A disposal nested in a cleanup no longer flushes effects while the outer tree is half torn down.
+- When a cleanup throws as a memo or effect re-runs, the older cleanups still run, the node still re-runs, and the error is thrown once afterward (an `AggregateError` for several); cleanups run as a disposal, so a memo's own cleanup may write a signal in development too.
+- `pauseOwner` pauses every node before running any cleanup, runs cleanups children first, and rethrows once at the end.
+- `useAction` sends the error of a stale dispatch to the owner's error handler, and `dispatch` no longer throws synchronously when the owner has no handler (the error is reported with `reportError`).
+
 ## 1.0.2
 
 ### Fixed

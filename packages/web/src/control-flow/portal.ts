@@ -1,16 +1,24 @@
-import { createRoot, isServer, onCleanup, useContext, useRenderEffect } from "@shadow-js/core";
+import {
+  createRoot,
+  getOwner,
+  isServer,
+  onCleanup,
+  runWithOwner,
+  useContext,
+  useRenderEffect,
+} from "@shadow-js/core";
 import {
   bindRegion,
   childScope,
   claims,
   createRegion,
+  moveRegion,
   nextKey,
   PortalContext,
   type Region,
   removeRegion,
   withScope,
 } from "../extend";
-import { renderServerPortal } from "../server/portals";
 
 /**
  * Props of {@link Portal}.
@@ -87,8 +95,8 @@ function resolveMount(mount: PortalProps["mount"]): Element | null {
  * Renders `children` into another part of the document, without a wrapper: the content nodes are
  * inserted directly into the mount element (or its shadow root). Nothing is left at the call site.
  * Disposing the owner removes exactly the nodes the portal inserted; nodes that were already in the
- * mount stay. A reactive `mount` moves the content, and static nodes keep their identity while they
- * move.
+ * mount stay. A reactive `mount` moves the content: the children are built once, and
+ * their nodes and effects keep their identity while they move.
  *
  * On the server the content is rendered into the render's `portals` collector (see
  * `createServerPortals`), and the document emits it at the end of `<body>`. When the browser hydrates
@@ -127,9 +135,12 @@ export function Portal(props: PortalProps): null {
   // by the collector as well as by the build's `isServer` flag: the same server code runs in both.
   const sink = useContext(PortalContext);
   if (isServer || sink !== null) {
-    if (props.useShadow !== true) renderServerPortal(key, () => props.children, sink);
+    if (props.useShadow !== true) sink?.render?.(key, () => props.children);
     return null;
   }
+  // The content is built under the portal's own owner, not under the effect that picks the mount:
+  // that effect runs again for each new mount and would dispose what it owns.
+  const owner = getOwner();
   let mounted: Mounted | undefined;
   let warned = false;
   // The server block of this portal, taken out of the markers while hydrating; used by the first mount.
@@ -147,19 +158,21 @@ export function Portal(props: PortalProps): null {
   /** Creates the content region in `host`, adopting the nodes that are already there. */
   const mountInto = (host: Node, initial: Node[], mode: MountMode): Mounted => {
     const region = createRegion(host, null, initial);
-    const stopEffects = createRoot((dispose) => {
-      const bind = (): void => {
-        bindRegion(region, () => props.children);
-      };
-      if (mode === "plain") bind();
-      else if (mode === "claimed") withScope(childScope(key), bind);
-      else claims.current.withoutClaiming(() => withScope(childScope(key), bind));
-      return dispose;
-    });
+    const stopEffects = runWithOwner(owner, () =>
+      createRoot((dispose) => {
+        const bind = (): void => {
+          bindRegion(region, () => props.children);
+        };
+        if (mode === "plain") bind();
+        else if (mode === "claimed") withScope(childScope(key), bind);
+        else claims.current.withoutClaiming(() => withScope(childScope(key), bind));
+        return dispose;
+      }),
+    );
     return { host, region, stopEffects };
   };
 
-  /** Moves the content to `target`. The nodes move first, then the children are bound again. */
+  /** Mounts the content in `target` the first time, and moves it there afterward. */
   const moveTo = (target: Node): void => {
     const previous = mounted;
     if (previous === undefined) {
@@ -174,10 +187,10 @@ export function Portal(props: PortalProps): null {
       mounted = mountInto(target, initial, mode);
       return;
     }
-    const nodes = previous.region.nodes.filter((node) => node.parentNode === previous.host);
-    previous.stopEffects();
-    for (const node of nodes) appendMoved(target, node);
-    mounted = mountInto(target, nodes, "plain");
+    // The children were built once, under an owner that stays: the nodes and their effects move, so
+    // an input keeps what was typed and a component is neither disposed nor set up again.
+    moveRegion(previous.region, target, (node) => appendMoved(target, node));
+    mounted = { host: target, region: previous.region, stopEffects: previous.stopEffects };
   };
 
   useRenderEffect(

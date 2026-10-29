@@ -13,7 +13,7 @@ import type {
 } from "./ir";
 import { escapeHtmlAttribute, escapeHtmlText, propertyKey } from "./jsx-text";
 import type { LowerContext } from "./lower";
-import { attributeName, eventPlan } from "./react-names";
+import { attributeName, eventPlan, isEventHandlerAttribute } from "./react-names";
 import type { Registry } from "./registry";
 
 /** Events whose handlers are attached once per document through event delegation. */
@@ -91,6 +91,48 @@ const PROPERTIES = new Set([
   "textContent",
   "innerText",
 ]);
+
+/**
+ * The HTML elements that have a DOM property of {@link PROPERTIES}. A name that is not here is on every
+ * HTML element (`hidden`, `inert`, `autofocus`, `innerHTML`, ...). On any other element the name is an
+ * attribute: assigning the property would only set an expando the markup never shows, and `value` on `li`
+ * is a number property that would turn `undefined` into `0`.
+ */
+const PROPERTY_TAGS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
+  (
+    [
+      ["value", "button data input meter option output param progress select textarea"],
+      ["defaultValue", "input output select textarea"],
+      ["checked", "input"],
+      ["defaultChecked", "input"],
+      ["indeterminate", "input"],
+      ["selected", "option"],
+      ["muted", "audio video"],
+      ["autoplay", "audio video"],
+      ["controls", "audio video"],
+      ["loop", "audio video"],
+      ["playsInline", "video"],
+      ["disabled", "button fieldset input link optgroup option select style textarea"],
+      ["readOnly", "input textarea"],
+      ["required", "input select textarea"],
+      ["multiple", "input select"],
+      ["open", "details dialog"],
+      ["noValidate", "form"],
+      ["formNoValidate", "button input"],
+      ["reversed", "ol"],
+    ] as const
+  ).map(([name, tags]) => [name, new Set(tags.split(" "))] as const),
+);
+
+/** True when `name` is assigned as a DOM property on this element (see {@link PROPERTY_TAGS}). */
+function assignsProperty(el: ElementIR, name: string): boolean {
+  if (!PROPERTIES.has(name) || el.ns === "svg") return false;
+  // A custom element declares its own properties: the names are assigned as they are.
+  if (el.custom) return true;
+  if (el.ns !== "html") return false;
+  const tags = PROPERTY_TAGS.get(name);
+  return tags === undefined || tags.has(el.tag);
+}
 
 /** Properties that must be applied after children exist (`<select value>`), and read back safely. */
 const POST_PROPERTIES = new Set(["value", "checked", "selected", "defaultValue", "defaultChecked"]);
@@ -193,9 +235,15 @@ function elementFlags(el: ElementIR): number {
 
 // ---------- expressions ----------
 
+/**
+ * Parenthesizes text that an arrow function body or a statement would read as a block or a comma list:
+ * an object literal, a sequence, and anything else that starts with a brace (`{ a: 1 }[key]`).
+ */
 export function wrapObjectLiteral(text: string, node: AstNode): string {
   const inner = unwrapParens(node);
-  return inner.type === "ObjectExpression" || inner.type === "SequenceExpression"
+  return inner.type === "ObjectExpression" ||
+    inner.type === "SequenceExpression" ||
+    text.startsWith("{")
     ? `(${text})`
     : text;
 }
@@ -288,12 +336,17 @@ function slotValue(d: DomContext, e: ExprIR): string {
  * `let` binding, a variable to store the element in; the assignment is only emitted for the latter,
  * because assigning a `const` fails the bundle even in a branch that never runs.
  */
-function isConstantRef(d: DomContext, node: AstNode): boolean {
+export function isConstantRef(d: DomContext, node: AstNode): boolean {
   const target = unwrapParens(node);
   return target.type === "Identifier" && d.immutable.has(String(target["name"]));
 }
 
-function refStatement(d: DomContext, text: string, node: AstNode, constant: boolean): string {
+export function refStatement(
+  d: DomContext,
+  text: string,
+  node: AstNode,
+  constant: boolean,
+): string {
   const target = unwrapParens(node);
   const assignable =
     !constant && (target.type === "Identifier" || target.type === "MemberExpression");
@@ -482,7 +535,7 @@ function genAttrs(d: DomContext, el: ElementIR, v: string | null, block: Block):
       continue;
     }
     if (attr.kind === "static") {
-      if (isEventAttribute(attr.name) && typeof attr.value === "string") {
+      if (isEventHandlerAttribute(attr.name) && typeof attr.value === "string") {
         fail(
           d,
           "STRING_EVENT_HANDLER",
@@ -509,7 +562,15 @@ function genAttrs(d: DomContext, el: ElementIR, v: string | null, block: Block):
   if (spreadAt !== -1) {
     if (v === null) fail(d, "INTERNAL", "Spread without an element reference.", el.start);
     const rest = el.attrs.slice(spreadAt);
-    const segments = propEntries(d, rest, [], el.start);
+    // The spread's runtime does not know `on:`, `use:`, `class:` and `style:`: those are compiled as
+    // directives, after the spread, as they are when written before it.
+    const directives = rest.filter(isSpreadDirective);
+    const segments = propEntries(
+      d,
+      rest.filter((a) => !isSpreadDirective(a)),
+      [],
+      el.start,
+    );
     const parts: string[] = [];
     for (const segment of segments) {
       if (segment.length === 0) continue;
@@ -523,8 +584,45 @@ function genAttrs(d: DomContext, el: ElementIR, v: string | null, block: Block):
         : `${d.reg.helper("mergeProps")}(${parts.join(", ")})`;
     const hasChildren = el.children.length > 0;
     block.ops.push(`${d.reg.helper("spread")}(${v}, ${props}, ${isSvg}, ${hasChildren});`);
+    for (const directive of directives) genExprAttr(d, el, directive, v, block, out, isSvg);
   }
   return out;
+}
+
+/** The attribute namespaces the runtime spread cannot apply, so the compiler binds them itself. */
+const SPREAD_DIRECTIVES: ReadonlySet<string> = new Set([
+  "on",
+  "oncapture",
+  "use",
+  "class",
+  "style",
+]);
+
+/** True for `on:x`, `oncapture:x`, `use:x`, `class:x` and `style:x` (not a spread and not a plain prop). */
+export function isSpreadDirective(attr: AttrIR): attr is Extract<AttrIR, { kind: "expr" }> {
+  if (attr.kind !== "expr") return false;
+  const colon = attr.name.indexOf(":");
+  return colon !== -1 && SPREAD_DIRECTIVES.has(attr.name.slice(0, colon));
+}
+
+/**
+ * True when a custom element gets this attribute as a property (`el.items = value`): every name that
+ * has no markup meaning of its own. A hyphenated name (`data-x`, `aria-label`) is an attribute.
+ */
+function isCustomProperty(el: ElementIR, name: string, svg: boolean): boolean {
+  return (
+    el.custom &&
+    !svg &&
+    !name.includes("-") &&
+    !name.includes(":") &&
+    !PROPERTIES.has(name) &&
+    name !== "class" &&
+    name !== "className" &&
+    name !== "classList" &&
+    name !== "style" &&
+    name !== "autoFocus" &&
+    !isEventAttribute(name)
+  );
 }
 
 function genExprAttr(
@@ -548,7 +646,9 @@ function genExprAttr(
     name !== "ref" &&
     name !== "children" &&
     !isEventAttribute(name) &&
-    !/^(?:use|on|oncapture):/.test(name);
+    // A function given to a property or an attribute directive is the value, not an accessor to read.
+    !/^(?:use|on|oncapture|prop|attr):/.test(name) &&
+    !isCustomProperty(el, name, isSvg);
   const expr: ExprIR = maybeAccessor
     ? {
         ...attr.expr,
@@ -664,7 +764,7 @@ function genExprAttr(
     block.ops.push(`${reg.helper("autoFocus")}(${v}, ${text});`);
     return;
   }
-  if (PROPERTIES.has(name) && !isSvg && el.tag !== "svg") {
+  if (assignsProperty(el, name)) {
     // A select's value may be an array (`multiple`): a helper selects the options it lists.
     const assignment =
       (name === "value" || name === "defaultValue") && el.tag === "select"
@@ -677,7 +777,7 @@ function genExprAttr(
     else block.ops.push(statement);
     return;
   }
-  if (el.custom) {
+  if (el.custom && !name.includes("-")) {
     block.ops.push(run(`${v}[${JSON.stringify(name)}] = ${text};`));
     return;
   }
