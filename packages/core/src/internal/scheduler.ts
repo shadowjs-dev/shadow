@@ -104,7 +104,8 @@ export function flush(): void {
         rt.uncaught.push(new ShadowError("INFINITE_LOOP"));
         break;
       }
-      runs += drain(renderQueue.length > 0 ? renderQueue : userQueue);
+      const ran = drain(renderQueue.length > 0 ? renderQueue : userQueue);
+      if (__DEV__) runs += ran;
     }
   } finally {
     rt.flushing = false;
@@ -155,7 +156,7 @@ function runScheduled(): void {
  */
 export function schedule(): void {
   // A transition write waits for the lane (scheduled when the effect is queued), never for a microtask.
-  if (rt.inTransition || rt.batchDepth > 0 || rt.flushing || microtaskScheduled) return;
+  if (rt.inTransition || rt.batches > 0 || rt.flushing || microtaskScheduled) return;
   microtaskScheduled = true;
   queueMicrotask(runScheduled);
 }
@@ -182,13 +183,35 @@ export function schedule(): void {
  * @since 1.0.0
  */
 export function group<T>(fn: () => T): T {
-  rt.batchDepth += 1;
+  rt.batches += 1;
   try {
     return fn();
   } finally {
-    rt.batchDepth -= 1;
-    if (rt.batchDepth === 0 && hasPending()) schedule();
+    rt.batches -= 1;
+    if (rt.batches === 0 && hasPending()) schedule();
   }
+}
+
+/**
+ * Flushes when `wanted`, then rethrows `failure` when `failed`. A failing flush is thrown on its own, or
+ * together with `failure` (an `AggregateError` with `message`) when both threw.
+ * @internal
+ */
+export function flushThenThrow(
+  wanted: boolean,
+  failed: boolean,
+  failure: unknown,
+  message: string,
+): void {
+  if (wanted) {
+    try {
+      flush();
+    } catch (error) {
+      if (!failed) throw error;
+      throw new AggregateError([failure, error], message);
+    }
+  }
+  if (failed) throw failure;
 }
 
 /**
@@ -197,7 +220,7 @@ export function group<T>(fn: () => T): T {
  * the flush has run, and thrown with the flush's own error as an `AggregateError` when both threw.
  */
 function runBatched<T>(fn: (() => T) | undefined, sync: boolean): T {
-  rt.batchDepth += 1;
+  rt.batches += 1;
   let result: T | undefined;
   let failure: unknown;
   let failed = false;
@@ -207,22 +230,14 @@ function runBatched<T>(fn: (() => T) | undefined, sync: boolean): T {
     failed = true;
     failure = error;
   } finally {
-    rt.batchDepth -= 1;
+    rt.batches -= 1;
   }
-  if (sync || (rt.batchDepth === 0 && !rt.flushing && hasPending())) {
-    try {
-      flush();
-    } catch (error) {
-      if (failed) {
-        throw new AggregateError(
-          [failure, error],
-          __DEV__ ? "Both the callback and the flush threw." : "SHADOW_BATCH_ERRORS",
-        );
-      }
-      throw error;
-    }
-  }
-  if (failed) throw failure;
+  flushThenThrow(
+    sync || (rt.batches === 0 && !rt.flushing && hasPending()),
+    failed,
+    failure,
+    __DEV__ ? "Both the callback and the flush threw." : "SHADOW_BATCH_ERRORS",
+  );
   return result as T;
 }
 

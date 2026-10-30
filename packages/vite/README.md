@@ -13,8 +13,7 @@ npm install -D @shadow-js/vite vite
 ```
 
 Requires Vite 7 or 8 (`vite` is an optional peer dependency, `^7.0.0 || ^8.0.0`). `@shadow-js/compiler` is installed
-as a dependency. ShadowJS 1.0.0 is not on npm yet; until it is published, install it from a local
-checkout of this repository.
+as a dependency.
 
 ## Example
 
@@ -120,6 +119,7 @@ export default defineConfig({
 | `hmr` | `true` | Hot-update components in place during `vite dev`. |
 | `dev` | Vite dev mode | Force development output (component names, extra checks). |
 | `domTests` | detected | Run the browser build under Vitest. On by default for `happy-dom` and `jsdom`. |
+| `compiler` | `"auto"` | Which compiler implementation runs: `"auto"` (the fastest available), `"native"` (the Rust or WebAssembly build; throws when only the TypeScript one is available) or `"javascript"` (the TypeScript implementation only). |
 | `plugins` | none | [Compiler plugins](https://shadowjs.net/guides/compiler/) (`CompilerPlugin` from `@shadow-js/compiler`) that run in the build on every compiled module. Validated when `shadow()` is called; errors fail the build with the plugin's name and the position, warnings go to Vite's log. |
 
 ## Hot updates
@@ -170,7 +170,7 @@ Entry `@shadow-js/vite/mdx`:
 
 ## Dependencies
 
-- Runtime `@shadow-js/compiler` `1.0.0`: compiles component sources in the Vite plugin (`src/index.ts`).
+- Runtime `@shadow-js/compiler` `1.0.4`: compiles component sources in the Vite plugin (`src/index.ts`).
 - Optional peers: `vite` `^7.0.0 || ^8.0.0`: the host for the plugin and the `Plugin` type (`src/index.ts`, `src/mdx.ts`); `@mdx-js/mdx` `^3.0.0`: compiles MDX (`src/mdx.ts`).
 
 ## Types

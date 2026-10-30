@@ -151,6 +151,10 @@ export interface Hooks {
 /**
  * The runtime registers (R-CODE-4): the only module-level mutable state of core besides
  * monotonic counters. Every write is paired with a `finally` restore (R-CODE-5).
+ *
+ * Not a public symbol: `core/extend` re-exports only the types of this module, and the registers stay
+ * behind the extension functions (`currentOwner`, `untrack` and friends) so a plugin cannot leave one set.
+ * @internal
  */
 export const rt: {
   /** Owner that adopts newly created nodes. */
@@ -160,11 +164,11 @@ export const rt: {
   /** Computation currently executing, tracked or not (used by the write-in-memo guard). */
   running: Computation | null;
   /** Nesting depth of batch()/flushSync() calls. */
-  batchDepth: number;
+  batches: number;
   /** True while the flush loop is draining the effect queues. */
   flushing: boolean;
   /** Nesting depth of memo recomputation, used to switch to iterative pulls. */
-  recomputeDepth: number;
+  nesting: number;
   /** Nesting depth of disposals in progress; errors raised meanwhile are collected, not thrown. */
   disposing: number;
   /** Errors nobody handled during the current flush or disposal; rethrown once it completes. */
@@ -179,9 +183,9 @@ export const rt: {
   owner: null,
   listener: null,
   running: null,
-  batchDepth: 0,
+  batches: 0,
   flushing: false,
-  recomputeDepth: 0,
+  nesting: 0,
   disposing: 0,
   uncaught: [],
   inTransition: false,
@@ -190,7 +194,11 @@ export const rt: {
 };
 
 let counter = 0;
-/** Monotonic creation sequence; orders sibling effects (G-16). */
+/**
+ * Monotonic creation sequence; orders sibling effects (G-16). Not a public symbol: only the engine
+ * stamps nodes with it.
+ * @internal
+ */
 export function nextSequence(): number {
   counter += 1;
   return counter;

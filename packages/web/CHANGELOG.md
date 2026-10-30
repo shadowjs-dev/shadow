@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.4
+
+### Fixed
+
+- Smaller bundles with the same behavior.
+- A keyed list reorder no longer drops the focus in WebKit. Safari has no `moveBefore`, so moving a row with `insertBefore` blurred an input inside it. When the list is reordered without `moveBefore`, the focused element is now focused again after the move, without scrolling. The same applies when a `Portal` moves its content to a new mount.
+
 ## 1.0.3
 
 ### Fixed

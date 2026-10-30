@@ -14,8 +14,7 @@ later is the effects and bindings inside them.
 npm install @shadow-js/core
 ```
 
-ShadowJS 1.0.0 is not on npm yet. Until it is published, install it from a local checkout of this
-repository.
+To try a change that is not released yet, install from a local checkout of this repository.
 Requires Node 22.12 or newer for tooling; the package is ESM only.
 
 ## Example

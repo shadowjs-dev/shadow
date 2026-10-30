@@ -11,66 +11,26 @@ import { plainText, setSelectValue } from "./select-value";
 /** The namespace of `xlink:` attributes (SVG's legacy links). */
 const XLINK_NS = "http://www.w3.org/1999/xlink";
 
-/** The HTML of a `dangerouslySetInnerHTML` value (`{ __html }`); null and undefined mean empty. */
-function innerHtmlValue(value: unknown): string {
-  if (value === null || typeof value !== "object") return "";
-  return plainText(Reflect.get(value, "__html"));
-}
-
 /** Keys that would reach a prototype if written as properties. Ignored everywhere. */
 const FORBIDDEN_NAMES = /^(?:__proto__|constructor|prototype)$/;
 
 /** Mutable bookkeeping for one spread: the values last applied and the event bindings. */
 interface SpreadState {
   readonly values: Map<string, unknown>;
-  readonly unbinders: Map<string, () => void>;
-  styleValue: unknown;
-  classListValue: Record<string, unknown> | undefined;
+  readonly unbind: Map<string, () => void>;
+  styled?: unknown;
+  listed?: Record<string, unknown> | undefined;
   /** Cleanup returned by the `ref` callback currently applied (React 19 ref cleanup). */
-  refCleanup: (() => void) | undefined;
+  unref?: (() => void) | undefined;
   /** `autoFocus` acts on the first application only, as React applies it once at commit. */
-  autoFocused?: boolean;
-}
-
-/** True for `on*` keys, which bind event handlers. */
-function isEventKey(key: string): boolean {
-  return key.length > 2 && key.startsWith("on");
-}
-
-/** The name after a `prop:`, `attr:` or `bool:` namespace, or the whole key. */
-function nameOf(key: string): string {
-  const colon = key.indexOf(":");
-  return colon === -1 ? key : key.slice(colon + 1);
-}
-
-/** Reads every prop except children, inside the render effect so each read is tracked. */
-function readEntries(props: unknown, textarea: boolean): Array<[string, unknown]> {
-  const entries: Array<[string, unknown]> = [];
-  if (props === null || typeof props !== "object") return entries;
-  let value: unknown;
-  let hasValue = false;
-  for (const key of Object.keys(props)) {
-    if (FORBIDDEN_NAMES.test(nameOf(key)) || IGNORED_KEYS.test(key)) continue;
-    if (key === "children") {
-      // A textarea's children are its value (the server writes them as its content): a text node
-      // child would not follow the data once the user has typed.
-      if (textarea) {
-        value = Reflect.get(props, key);
-        hasValue = true;
-      }
-      continue;
-    }
-    entries.push([key, Reflect.get(props, key)]);
-  }
-  if (hasValue && !entries.some(([key]) => key === "value")) entries.push(["value", value]);
-  return entries;
+  focused?: boolean;
 }
 
 /** Runs and forgets the cleanup the last ref callback returned, if any. */
 function runRefCleanup(state: SpreadState): void {
-  const cleanup = state.refCleanup;
+  const cleanup = state.unref;
   if (cleanup === undefined) return;
-  state.refCleanup = undefined;
+  state.unref = undefined;
   untrack(cleanup);
 }
 
@@ -88,13 +48,13 @@ function applyKey(
     if (typeof value === "function") {
       const callRef = value as (node: Element) => unknown;
       const cleanup = untrack(() => callRef(el));
-      if (typeof cleanup === "function") state.refCleanup = cleanup as () => void;
+      if (typeof cleanup === "function") state.unref = cleanup as () => void;
     }
     return;
   }
   if (key === "autoFocus") {
-    if (!state.autoFocused) {
-      state.autoFocused = true;
+    if (!state.focused) {
+      state.focused = true;
       autoFocus(el, value);
     }
     return;
@@ -104,26 +64,33 @@ function applyKey(
     return;
   }
   if (key === "style") {
-    state.styleValue = style(el as HTMLElement | SVGElement, value, state.styleValue);
+    state.styled = style(el as HTMLElement | SVGElement, value, state.styled);
     return;
   }
   if (key === "classList") {
-    state.classListValue = classList(el, asRecord(value), state.classListValue);
+    state.listed = classList(el, asRecord(value), state.listed);
     return;
   }
-  if (isEventKey(key)) {
-    state.unbinders.get(key)?.();
-    state.unbinders.delete(key);
+  if (key.length > 2 && key.startsWith("on")) {
+    state.unbind.get(key)?.();
+    state.unbind.delete(key);
     // React's spelling: `onChange`, `onFocus`, `...Capture` and passive `onWheel` bind as React does.
     const plan = eventPlan(key, el.localName, el.getAttribute("type")?.toLowerCase() ?? null);
     const handler =
       plan.passive && typeof value === "function" ? { handleEvent: value, passive: true } : value;
     const unbind = bindEvent(el, plan.type, handler, true, plan.capture);
-    if (unbind !== undefined) state.unbinders.set(key, unbind);
+    if (unbind !== undefined) state.unbind.set(key, unbind);
     return;
   }
   if (key === "innerHTML" || key === "dangerouslySetInnerHTML") {
-    el.innerHTML = key === "innerHTML" ? plainText(value) : innerHtmlValue(value);
+    // `dangerouslySetInnerHTML` holds `{ __html }`; null and undefined mean empty.
+    el.innerHTML = plainText(
+      key === "innerHTML"
+        ? value
+        : value !== null && typeof value === "object"
+          ? Reflect.get(value, "__html")
+          : undefined,
+    );
     return;
   }
   if (key === "textContent") {
@@ -147,15 +114,8 @@ function applyKey(
     }
     return;
   }
-  writeKey(el, key, value, svg);
-}
-
-/**
- * Writes one prop by its key: a `prop:` property, an `attr:` or `bool:` attribute, or an attribute
- * under its React name. An `undefined` value removes the attribute or resets the property, which is how
- * a prop that disappeared is undone.
- */
-function writeKey(el: Element, key: string, value: unknown, svg: boolean): void {
+  // A `prop:` property, an `attr:` or `bool:` attribute, or an attribute under its React name. An `undefined`
+  // value removes the attribute or resets the property, which is how a prop that disappeared is undone.
   if (key.startsWith("prop:")) {
     Reflect.set(el, key.slice(5), value);
   } else if (key.startsWith("attr:")) {
@@ -187,37 +147,6 @@ function liveDiffers(el: Element, key: string, value: unknown, svg: boolean): bo
   if (key === "value" && el instanceof HTMLSelectElement) return true;
   const live = Reflect.get(el, key);
   return STRING_PROPERTIES.test(key) ? live !== plainText(value) : live !== Boolean(value);
-}
-
-/**
- * Applies the entries that changed since the last run and undoes the ones that disappeared.
- * Unchanged values are skipped by identity, so only changed keys touch the DOM.
- */
-function applyEntries(
-  el: Element,
-  entries: Array<[string, unknown]>,
-  state: SpreadState,
-  svg: boolean,
-): void {
-  const current = new Set<string>();
-  for (const [key, value] of entries) {
-    current.add(key);
-    if (
-      state.values.has(key) &&
-      Object.is(state.values.get(key), value) &&
-      !liveDiffers(el, key, value, svg)
-    )
-      continue;
-    state.values.set(key, value);
-    applyKey(el, key, value, state, svg);
-  }
-  for (const key of [...state.values.keys()]) {
-    if (current.has(key)) continue;
-    state.values.delete(key);
-    // A prop that disappeared is applied as `undefined`: every branch of applyKey then undoes it (a ref cleanup
-    // runs, a handler is unbound, the class, style and attribute go, a live property returns to empty).
-    applyKey(el, key, undefined, state, svg);
-  }
 }
 
 /**
@@ -298,13 +227,7 @@ function followOptions(el: Element, isSVG: boolean, state: SpreadState): void {
 
 /** The bookkeeping of a spread that has applied nothing yet. */
 function newState(): SpreadState {
-  return {
-    values: new Map(),
-    unbinders: new Map(),
-    styleValue: undefined,
-    classListValue: undefined,
-    refCleanup: undefined,
-  };
+  return { values: new Map(), unbind: new Map() };
 }
 
 /**
@@ -330,14 +253,57 @@ function applyProps(el: Element, read: () => unknown, isSVG: boolean, state: Spr
   const textarea = el.localName === "textarea";
   // Native listeners come off with the owner, even if the element outlives it.
   onCleanup(() => {
-    for (const unbind of state.unbinders.values()) unbind();
-    state.unbinders.clear();
+    for (const unbind of state.unbind.values()) unbind();
+    state.unbind.clear();
     runRefCleanup(state);
   });
   useRenderEffect(
-    () => readEntries(read(), textarea),
+    // Reads every prop except children, inside the render effect so each read is tracked.
+    () => {
+      const props = read();
+      const entries: Array<[string, unknown]> = [];
+      if (props === null || typeof props !== "object") return entries;
+      let value: unknown;
+      let hasValue = false;
+      for (const key of Object.keys(props)) {
+        if (FORBIDDEN_NAMES.test(key.slice(key.indexOf(":") + 1)) || IGNORED_KEYS.test(key))
+          continue;
+        if (key === "children") {
+          // A textarea's children are its value (the server writes them as its content): a text node
+          // child would not follow the data once the user has typed.
+          if (textarea) {
+            value = Reflect.get(props, key);
+            hasValue = true;
+          }
+          continue;
+        }
+        entries.push([key, Reflect.get(props, key)]);
+      }
+      if (hasValue && !entries.some(([key]) => key === "value")) entries.push(["value", value]);
+      return entries;
+    },
+    // Applies the entries that changed since the last run and undoes the ones that disappeared.
+    // Unchanged values are skipped by identity, so only changed keys touch the DOM.
     (entries) => {
-      applyEntries(el, entries, state, isSVG);
+      const current = new Set<string>();
+      for (const [key, value] of entries) {
+        current.add(key);
+        if (
+          state.values.has(key) &&
+          Object.is(state.values.get(key), value) &&
+          !liveDiffers(el, key, value, isSVG)
+        )
+          continue;
+        state.values.set(key, value);
+        applyKey(el, key, value, state, isSVG);
+      }
+      for (const key of [...state.values.keys()]) {
+        if (current.has(key)) continue;
+        state.values.delete(key);
+        // A prop that disappeared is applied as `undefined`: every branch of applyKey then undoes it (a ref
+        // cleanup runs, a handler is unbound, the class, style and attribute go, a live property returns to empty).
+        applyKey(el, key, undefined, state, isSVG);
+      }
     },
   );
 }

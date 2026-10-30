@@ -1,6 +1,6 @@
 {
   "name": "@shadow-js/vite",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "A Vite plugin that compiles your JSX, builds for server rendering and sets up Vitest",
   "license": "MIT",
   "type": "module",
@@ -38,12 +38,12 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@shadow-js/compiler": "1.0.3"
+    "@shadow-js/compiler": "1.0.4"
   },
   "peerDependencies": {
     "vite": "^7.0.0 || ^8.0.0",
     "@mdx-js/mdx": "^3.0.0",
-    "@shadow-js/web": "^1.0.3"
+    "@shadow-js/web": "^1.0.4"
   },
   "peerDependenciesMeta": {
     "vite": {

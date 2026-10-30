@@ -2,17 +2,6 @@ import { leaves, unwrap } from "./internal/accessor";
 import { cssValueText } from "./internal/css-units";
 import { HTML_NS } from "./internal/names";
 
-/** `map` itself, or a copy in which accessor values are resolved, so a later diff compares what was applied. */
-function resolveMap(map: Record<string, unknown>): Record<string, unknown> {
-  let out = map;
-  for (const key of Object.keys(map)) {
-    if (typeof map[key] !== "function") continue;
-    if (out === map) out = { ...map };
-    out[key] = unwrap(map[key]);
-  }
-  return out;
-}
-
 /** Appends the truthy class names of `value` (strings, numbers, nested arrays, objects) to `parts`. */
 function collectClasses(root: unknown, parts: string[]): void {
   const cycle = __DEV__ ? "className(): a class array contains itself." : "SHADOW_CLASS_CYCLE";
@@ -123,7 +112,14 @@ export function classList(
   value: Record<string, unknown> | undefined,
   prev?: Record<string, unknown>,
 ): Record<string, unknown> {
-  const next = resolveMap(value ?? {});
+  // `value` itself, or a copy in which accessor values are resolved, so a later diff compares what was applied.
+  const source = value ?? {};
+  let next = source;
+  for (const key of Object.keys(source)) {
+    if (typeof source[key] !== "function") continue;
+    if (next === source) next = { ...source };
+    next[key] = unwrap(source[key]);
+  }
   const before: Record<string, unknown> = prev ?? {};
   const keys = new Set([...Object.keys(before), ...Object.keys(next)]);
   for (const key of keys) {
@@ -234,7 +230,8 @@ export function style(el: HTMLElement | SVGElement, value: unknown, prev?: unkno
     }
     return resolved;
   }
-  const next = resolveMap({ ...(resolved as Record<string, unknown>) });
+  const next: Record<string, unknown> = { ...(resolved as Record<string, unknown>) };
+  for (const key of Object.keys(next)) next[key] = unwrap(next[key]);
   const before = asRecord(prev) ?? {};
   // What a string or an array wrote is unknown, so it is cleared before the object is written.
   if (typeof prev === "string" || Array.isArray(prev)) el.style.cssText = "";

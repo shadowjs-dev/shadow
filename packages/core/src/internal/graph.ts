@@ -553,7 +553,7 @@ export function readSignal<T>(signal: Signal<T>): T {
 export function readMemo<T>(memo: Computation): T {
   if ((memo.flags & FLAG_RUNNING) !== 0) throw new ShadowError("CYCLE_DETECTED");
   if (memo.state !== CLEAN && refreshAncestors(memo)) {
-    updateIfNecessary(memo, rt.recomputeDepth >= DEEP_LIMIT);
+    updateIfNecessary(memo, rt.nesting >= DEEP_LIMIT);
   }
   if (rt.listener !== null) track(memo);
   if ((memo.flags & FLAG_HAS_ERROR) !== 0) throw memo.error;
@@ -586,7 +586,7 @@ export function recompute(node: Computation): void {
   rt.owner = node;
   rt.listener = node;
   rt.running = node;
-  rt.recomputeDepth += 1;
+  rt.nesting += 1;
   node.state = CLEAN;
   node.flags |= FLAG_RUNNING;
   node.stamp = nextSequence();
@@ -604,7 +604,7 @@ export function recompute(node: Computation): void {
     rt.owner = previousOwner;
     rt.listener = previousListener;
     rt.running = previousRunning;
-    rt.recomputeDepth -= 1;
+    rt.nesting -= 1;
     node.flags &= ~FLAG_RUNNING;
     // Sources this run did not read again are no longer dependencies. A node disposed while it ran
     // (it disposed its own owner) keeps none: reads after the disposal must not leave edges that

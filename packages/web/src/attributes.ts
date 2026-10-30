@@ -27,14 +27,15 @@ export function assertAttributeName(name: string): void {
   if (!ATTRIBUTE_NAME.test(name)) throw invalidAttributeName(name);
 }
 
-/** Removes C0 and C1 control characters (`\p{Cc}`), which browsers ignore inside a URL scheme. */
-function stripControls(text: string): string {
-  return text.replace(/\p{Cc}/gu, "");
-}
-
 /** True when the URL would run script: browsers ignore the controls and case that hide the scheme. */
 function isUnsafeUrl(value: string): boolean {
-  return UNSAFE_URL_PREFIXES.test(stripControls(value).trim().toLowerCase());
+  // C0 and C1 control characters (`\p{Cc}`) are removed: browsers ignore them inside a URL scheme.
+  return UNSAFE_URL_PREFIXES.test(
+    value
+      .replace(/\p{Cc}/gu, "")
+      .trim()
+      .toLowerCase(),
+  );
 }
 
 /**

@@ -11,7 +11,7 @@ import {
 import { leaves } from "./internal/accessor";
 import { checkClaimedText } from "./internal/claim";
 import { claims } from "./internal/hydration-hooks";
-import { reconcileNodes } from "./internal/reconcile";
+import { keepFocus, reconcileNodes } from "./internal/reconcile";
 
 /** One piece of a value after flattening: a DOM node, or text to be turned into a Text node. */
 type Part = Node | string;
@@ -178,21 +178,6 @@ export function watchCommits(parent: Node, run: () => void): void {
   });
 }
 
-/** Makes the DOM show `next` for this region. */
-function reconcileRegion(region: Region, next: Node[]): void {
-  const parent = region.parent;
-  const attached = region.nodes.filter((node) => node.parentNode === parent);
-  const end = endOf(region, attached.at(-1));
-  const first = attached[0];
-  if (next.length === 0 && first !== undefined) region.marker = first.previousSibling;
-  reconcileNodes(parent, attached, next, end);
-  region.nodes = next;
-  pruneTexts(region, next);
-  commitWatchers.get(parent)?.forEach((run) => {
-    run();
-  });
-}
-
 /** Applies a flattened value to a region. */
 function commit(region: Region, parts: readonly Part[]): void {
   if (__DEV__ && region.claimed !== undefined) {
@@ -200,7 +185,19 @@ function commit(region: Region, parts: readonly Part[]): void {
     checkClaimedText(region.claimed, parts);
     region.claimed = undefined;
   }
-  reconcileRegion(region, materialize(region, parts));
+  // Makes the DOM show the new nodes for this region.
+  const next = materialize(region, parts);
+  const parent = region.parent;
+  const attached = region.nodes.filter((node) => node.parentNode === parent);
+  const first = attached[0];
+  const end = endOf(region, attached.at(-1));
+  if (next.length === 0 && first !== undefined) region.marker = first.previousSibling;
+  reconcileNodes(parent, attached, next, end);
+  region.nodes = next;
+  pruneTexts(region, next);
+  commitWatchers.get(parent)?.forEach((run) => {
+    run();
+  });
 }
 
 /**
@@ -211,7 +208,7 @@ function commit(region: Region, parts: readonly Part[]): void {
 function commitValue(region: Region, raw: unknown): void {
   if ((typeof raw === "string" || typeof raw === "number") && !(__DEV__ && region.claimed)) {
     const nodes = region.nodes;
-    const text = typeof raw === "string" ? raw : String(raw);
+    const text = String(raw);
     if (nodes.length === 1) {
       const current = nodes[0];
       if (
@@ -233,26 +230,23 @@ function commitValue(region: Region, raw: unknown): void {
   commit(region, flatten(raw));
 }
 
-/** Nodes of `initial` (already in the parent) that the region adopts as its current content. */
-function adoptInitial(parent: Node, initial: unknown): Node[] {
-  const adopted: Node[] = [];
-  const seen = new Set<Node>();
-  for (const part of flatten(initial)) {
-    if (typeof part === "string" || seen.has(part) || part.parentNode !== parent) continue;
-    seen.add(part);
-    adopted.push(part);
-  }
-  return adopted;
-}
-
 /**
  * Creates the state of a region in `parent`. `anchorNode` (null to append) and `initial` (nodes
  * already in the DOM, from hydration or splitText) are both optional.
  * @internal
  */
 export function createRegion(parent: Node, anchorNode: Node | null, initial: unknown): Region {
-  const nodes = initial === undefined ? [] : adoptInitial(parent, initial);
-  const marker = nodes.length > 0 ? (nodes[0]?.previousSibling ?? null) : parent.lastChild;
+  // The nodes of `initial` (already in the parent) that the region adopts as its current content.
+  const nodes: Node[] = [];
+  if (initial !== undefined) {
+    const seen = new Set<Node>();
+    for (const part of flatten(initial)) {
+      if (typeof part === "string" || seen.has(part) || part.parentNode !== parent) continue;
+      seen.add(part);
+      nodes.push(part);
+    }
+  }
+  const marker = nodes.length > 0 ? (nodes[0] as Node).previousSibling : parent.lastChild;
   const region: Region = {
     parent,
     anchor: anchorNode,
@@ -271,7 +265,9 @@ export function createRegion(parent: Node, anchorNode: Node | null, initial: unk
  * and ends exactly where this one starts, that region gets an empty Text node there as its anchor. Its content then
  * always goes before that node, and this region's marker is the node, so no region has a marker that a sibling
  * region can replace: the order of the calls holds however the regions change. A region with static content
- * between it and this one needs nothing, because its marker and its end are the static nodes.
+ * between it and this one needs nothing, because its marker and its end are the static nodes. (A function of its
+ * own, so the cleanup it registers holds nothing but the anchor: a closure made inside `bindRegion` would keep
+ * the regions of that call alive as long as the parent's owner.)
  */
 function linkRegion(region: Region): void {
   const parent = region.parent;
@@ -312,43 +308,6 @@ function containsFunction(root: unknown): boolean {
 }
 
 /**
- * One memo per accessor function, owned by `owner` (the effect that evaluates the region's expression,
- * so a new result drops them all; the effect that resolves the result runs many times and must not
- * own them). `prune` disposes the memos of accessors the last
- * run did not meet, which bounds the cache by what the region currently shows.
- */
-function createCallCache(owner: ReturnType<typeof currentOwner>): {
-  begin(): void;
-  call(fn: () => unknown): unknown;
-  prune(): void;
-} {
-  const memos = new Map<() => unknown, ComputationNode>();
-  let touched = new Set<() => unknown>();
-  return {
-    begin(): void {
-      touched = new Set();
-    },
-    call(fn: () => unknown): unknown {
-      touched.add(fn);
-      let node = memos.get(fn);
-      if (node === undefined) {
-        // Component setup runs inside these memos, which may write the state it owns.
-        node = createComputation({ kind: "memo", fn: () => fn(), allowWrites: true, owner });
-        memos.set(fn, node);
-      }
-      return readComputation(node);
-    },
-    prune(): void {
-      for (const [fn, node] of memos) {
-        if (touched.has(fn)) continue;
-        memos.delete(fn);
-        disposeOwner(node);
-      }
-    },
-  };
-}
-
-/**
  * Keeps a region in sync with `value`. A value that is or contains a function (an accessor, or an
  * array with accessor members) runs inside a render effect, so its reads are tracked. Anything
  * else is inserted once. `ordered` is for `insert()` without an anchor: a region that keeps changing then keeps
@@ -375,12 +334,32 @@ export function bindRegion(region: Region, value: unknown, ordered?: boolean): u
   useRenderEffect(accessor, (raw) => {
     latest = raw;
     if (containsFunction(raw)) {
-      const cache = createCallCache(currentOwner());
+      // One memo per accessor function, owned by this effect (the effect that evaluates the region's expression,
+      // so a new result drops them all; the effect that resolves the result runs many times and must not own
+      // them). The memos of accessors the last run did not meet are disposed, which bounds the cache by what the
+      // region currently shows.
+      const owner = currentOwner();
+      const memos = new Map<() => unknown, ComputationNode>();
+      let touched = new Set<() => unknown>();
+      const call = (fn: () => unknown): unknown => {
+        touched.add(fn);
+        let node = memos.get(fn);
+        if (node === undefined) {
+          // Component setup runs inside these memos, which may write the state it owns.
+          node = createComputation({ kind: "memo", fn: () => fn(), allowWrites: true, owner });
+          memos.set(fn, node);
+        }
+        return readComputation(node);
+      };
       useRenderEffect(
         () => {
-          cache.begin();
-          const parts = flatten(raw, cache.call);
-          cache.prune();
+          touched = new Set();
+          const parts = flatten(raw, call);
+          for (const [fn, node] of memos) {
+            if (touched.has(fn)) continue;
+            memos.delete(fn);
+            disposeOwner(node);
+          }
           return parts;
         },
         (parts) => {
@@ -406,7 +385,10 @@ export function bindRegion(region: Region, value: unknown, ordered?: boolean): u
  */
 export function moveRegion(region: Region, parent: Node, move: (node: Node) => void): void {
   const attached = region.nodes.filter((node) => node.parentNode === region.parent);
-  for (const node of attached) move(node);
+  // A move that is not in place (appendChild) blurs a focused input: it gets the focus back.
+  keepFocus(region.parent, () => {
+    for (const node of attached) move(node);
+  });
   // Read-only for everyone else: only a move changes where a region lives.
   (region as { parent: Node }).parent = parent;
   region.marker = attached[0]?.previousSibling ?? parent.lastChild;

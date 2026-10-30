@@ -10,55 +10,45 @@ const DELEGATED_EVENTS =
 /** Documents that already carry the delegated listener for a given event name. */
 const installed = new WeakMap<Document, Set<string>>();
 
-/** A handler together with its optional data; `tuple` records the `[fn, data]` form. */
-interface Binding {
-  readonly fn: (this: EventTarget, ...args: unknown[]) => unknown;
-  readonly data: unknown;
-  readonly tuple: boolean;
-}
-
-/** Calls `fn` with `this` = node, retargeting `currentTarget` for the duration of the call. */
-function invoke(fn: Binding["fn"], node: EventTarget, event: Event, args: unknown[]): void {
-  Object.defineProperty(event, "currentTarget", { configurable: true, get: () => node });
-  try {
-    untrack(() => fn.call(node, ...args));
-  } finally {
-    Reflect.deleteProperty(event, "currentTarget");
-  }
-}
+/** A bound handler: called with `this` = the node. */
+type Handler = (this: EventTarget, ...args: unknown[]) => unknown;
 
 /**
  * The one listener per (document, event). It walks `composedPath()` from the target outward,
- * calling `node.$$<type>` with `this = node`. Stops when a handler stops propagation.
+ * calling `node.$$<type>` with `this = node` and `currentTarget` retargeted to the node for the
+ * duration of the call. Stops when a handler stops propagation.
  */
 function dispatchDelegated(event: Event): void {
   // One batch per event: every handler on the path runs first, then the effects, so the DOM is
   // current when the event finishes (ADR-007).
-  batch(() => dispatchPath(event));
-}
-
-function dispatchPath(event: Event): void {
-  const key = `$$${event.type}`;
-  const dataKey = `${key}Data`;
-  const errors: unknown[] = [];
-  for (const node of event.composedPath()) {
-    if (event.cancelBubble) break;
-    const fn = Reflect.get(node, key);
-    if (typeof fn !== "function") continue;
-    const data = Reflect.get(node, dataKey);
-    try {
-      invoke(fn as Binding["fn"], node, event, data === undefined ? [event] : [data, event]);
-    } catch (error) {
-      errors.push(error);
+  batch(() => {
+    const key = `$$${event.type}`;
+    const dataKey = `${key}Data`;
+    const errors: unknown[] = [];
+    for (const node of event.composedPath()) {
+      if (event.cancelBubble) break;
+      const fn = Reflect.get(node, key);
+      if (typeof fn !== "function") continue;
+      const data = Reflect.get(node, dataKey);
+      try {
+        Object.defineProperty(event, "currentTarget", { configurable: true, get: () => node });
+        untrack(() =>
+          (fn as Handler).call(node, ...(data === undefined ? [event] : [data, event])),
+        );
+      } catch (error) {
+        errors.push(error);
+      } finally {
+        Reflect.deleteProperty(event, "currentTarget");
+      }
     }
-  }
-  const [first] = errors;
-  if (errors.length === 1) throw first;
-  if (errors.length > 1)
-    throw new AggregateError(
-      errors,
-      __DEV__ ? "Several event handlers threw." : "SHADOW_EVENT_ERRORS",
-    );
+    const [first] = errors;
+    if (errors.length === 1) throw first;
+    if (errors.length > 1)
+      throw new AggregateError(
+        errors,
+        __DEV__ ? "Several event handlers threw." : "SHADOW_EVENT_ERRORS",
+      );
+  });
 }
 
 /** A DOM-style listener object: `handleEvent` plus the `addEventListener` options. */
@@ -78,6 +68,22 @@ function isListenerObject(handler: unknown): handler is ListenerObject {
   );
 }
 
+/** Adds a native listener that runs `run` untracked in one batch; returns the function that removes it. */
+function listen(
+  el: Element,
+  name: string,
+  run: (event: Event) => unknown,
+  options: AddEventListenerOptions | boolean,
+): () => void {
+  const listener = (event: Event): void => {
+    batch(() => untrack(() => run(event)));
+  };
+  el.addEventListener(name, listener, options);
+  return () => {
+    el.removeEventListener(name, listener, options);
+  };
+}
+
 /** Binds a listener object natively (never delegated), honoring its options. */
 function bindListenerObject(
   el: Element,
@@ -87,34 +93,12 @@ function bindListenerObject(
 ): () => void {
   const { once, passive, signal } = object;
   // A member that is `undefined` counts as absent to the DOM, so none of them needs a check.
-  const options = {
+  return listen(el, name, (event) => object.handleEvent(event), {
     capture: object.capture === true || capture,
     once,
     passive,
     signal,
-  } as AddEventListenerOptions;
-  const listener = (event: Event): void => {
-    batch(() => untrack(() => object.handleEvent(event)));
-  };
-  el.addEventListener(name, listener, options);
-  return () => {
-    el.removeEventListener(name, listener, options);
-  };
-}
-
-/** Normalizes a handler value into a binding; throws for values that are neither. */
-function toBinding(handler: unknown): Binding {
-  if (typeof handler === "function") {
-    return { fn: handler as Binding["fn"], data: undefined, tuple: false };
-  }
-  if (Array.isArray(handler) && typeof handler[0] === "function") {
-    return { fn: handler[0] as Binding["fn"], data: handler[1], tuple: true };
-  }
-  throw new TypeError(
-    __DEV__
-      ? "addEventListener(): the handler must be a function, [function, data] or an object with handleEvent."
-      : "SHADOW_EVENT_HANDLER",
-  );
+  } as AddEventListenerOptions);
 }
 
 /**
@@ -144,6 +128,18 @@ export function chainEvents(
   };
 }
 
+/** Installs the delegated listener for one event name on `target`, unless it is there already. */
+function installDelegate(name: string, target: Document): void {
+  let known = installed.get(target);
+  if (known === undefined) {
+    known = new Set<string>();
+    installed.set(target, known);
+  }
+  if (known.has(name)) return;
+  known.add(name);
+  target.addEventListener(name, dispatchDelegated);
+}
+
 /**
  * Installs the document listener that runs delegated handlers for each event name, once per
  * document and name; repeated calls do nothing. Compiled modules call it for the events they
@@ -162,16 +158,7 @@ export function chainEvents(
  * @since 1.0.0
  */
 export function delegateEvents(names: string[], target: Document = globalThis.document): void {
-  let known = installed.get(target);
-  if (known === undefined) {
-    known = new Set<string>();
-    installed.set(target, known);
-  }
-  for (const name of names) {
-    if (known.has(name)) continue;
-    known.add(name);
-    target.addEventListener(name, dispatchDelegated);
-  }
+  for (const name of names) installDelegate(name, target);
 }
 
 /**
@@ -224,40 +211,45 @@ export function bindEvent(
 ): (() => void) | undefined {
   if (handler === null || handler === undefined || handler === false) return undefined;
   if (isListenerObject(handler)) return bindListenerObject(el, name, handler, capture);
-  const binding = toBinding(handler);
+  let fn = handler as Handler;
+  let data: unknown;
+  let tuple = false;
+  if (Array.isArray(handler) && typeof handler[0] === "function") {
+    fn = handler[0] as Handler;
+    data = handler[1];
+    tuple = true;
+  } else if (typeof handler !== "function") {
+    throw new TypeError(
+      __DEV__
+        ? "addEventListener(): the handler must be a function, [function, data] or an object with handleEvent."
+        : "SHADOW_EVENT_HANDLER",
+    );
+  }
   // One delegated slot per event name: a second handler for the same name on this element (React's
   // onInput and onChange on one text input) binds natively, so both run.
   const slot = `$$${name}`;
   // The delegated slot tells a tuple from a plain handler by its data being defined, so a tuple whose
   // data is undefined is bound natively, where it still receives `(undefined, event)`.
-  const plain = !binding.tuple || binding.data !== undefined;
   if (
     delegate &&
-    plain &&
+    (!tuple || data !== undefined) &&
     !capture &&
     DELEGATED_EVENTS.test(name) &&
     Reflect.get(el, slot) === undefined
   ) {
-    delegateEvents([name], delegationDocument(el));
+    installDelegate(name, delegationDocument(el));
     const dataKey = `${slot}Data`;
-    Reflect.set(el, slot, binding.fn);
-    if (binding.tuple) Reflect.set(el, dataKey, binding.data);
+    Reflect.set(el, slot, fn);
+    if (tuple) Reflect.set(el, dataKey, data);
     else Reflect.deleteProperty(el, dataKey);
     return () => {
-      if (Reflect.get(el, slot) === binding.fn) {
+      if (Reflect.get(el, slot) === fn) {
         Reflect.deleteProperty(el, slot);
         Reflect.deleteProperty(el, dataKey);
       }
     };
   }
-  const listener = (event: Event): void => {
-    const args: unknown[] = binding.tuple ? [binding.data, event] : [event];
-    batch(() => untrack(() => binding.fn.call(el, ...args)));
-  };
-  el.addEventListener(name, listener, capture);
-  return () => {
-    el.removeEventListener(name, listener, capture);
-  };
+  return listen(el, name, (event) => fn.call(el, ...(tuple ? [data, event] : [event])), capture);
 }
 
 /**

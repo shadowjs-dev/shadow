@@ -1066,7 +1066,7 @@ dependencies = [
 
 [[package]]
 name = "shadow-compiler"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "flate2",
  "libc",
@@ -1085,7 +1085,7 @@ dependencies = [
 
 [[package]]
 name = "shadow-compiler-node"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "mimalloc",
  "napi",
@@ -1096,7 +1096,7 @@ dependencies = [
 
 [[package]]
 name = "shadow-compiler-wasm"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "serde",
  "serde_json",

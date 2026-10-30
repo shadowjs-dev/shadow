@@ -3,6 +3,20 @@ interface MovableParent extends Node {
   moveBefore(node: Node, child: Node | null): void;
 }
 
+/**
+ * Runs `run`, which moves nodes in the tree of `at` without `moveBefore`: a browser blurs a focused
+ * element that `insertBefore` moves, so a focused element of that tree that lost the focus gets it
+ * back, without scrolling. A text control keeps its selection across the move, and `focus()` keeps
+ * it. The focused element is read once, before `run`.
+ * @internal
+ */
+export function keepFocus(at: Node, run: () => void): void {
+  const root = at.getRootNode() as Partial<DocumentOrShadowRoot>;
+  const active = root.activeElement as HTMLElement | null | undefined;
+  run();
+  if (active != null && root.activeElement !== active) active.focus({ preventScroll: true });
+}
+
 /** Removes `node` only when it is still a child of `parent`, so detached nodes are ignored. */
 function removeNode(parent: Node, node: Node | undefined): void {
   if (node !== undefined && node.parentNode === parent) parent.removeChild(node);
@@ -53,7 +67,8 @@ function markLongestIncreasing(values: readonly number[], offset: number, marks:
  * 3. Place the rest from the end of `next` backwards. Nodes on a longest increasing subsequence of
  *    surviving positions stay where they are; every other node is moved (or inserted) directly
  *    before the node that follows it in `next`. Moves use `moveBefore` when the parent has it,
- *    which keeps focus and iframe state, and `insertBefore` otherwise. Each node moves at most once,
+ *    which keeps focus and iframe state, and `insertBefore` otherwise (a focused element that the move
+ *    blurred gets the focus back). Each node moves at most once,
  *    and the number of moves is minimal for the surviving order.
  *
  * @param parent The parent of the region.
@@ -127,6 +142,10 @@ export function reconcileNodes(
   markLongestIncreasing(survivors, head, stable);
   const movable = typeof (parent as Partial<MovableParent>).moveBefore === "function";
 
+  // Without moveBefore, insertBefore blurs a focused element it moves: the focused element is read once
+  // for the pass and gets the focus back (without scrolling) when the moves took it.
+  const root = parent.getRootNode() as Partial<DocumentOrShadowRoot>;
+  const active = movable ? null : (root.activeElement as HTMLElement | null | undefined);
   let anchorNode = before;
   for (let index = nextTail - 1; index >= head; index -= 1) {
     const node = next[index] as Node;
@@ -137,4 +156,5 @@ export function reconcileNodes(
     }
     anchorNode = node;
   }
+  if (active != null && root.activeElement !== active) active.focus({ preventScroll: true });
 }

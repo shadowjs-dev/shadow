@@ -1,7 +1,7 @@
 import type { Owner } from "./owner";
 import { disposeTree as disposeSubtree } from "./owner";
 import { hasPending } from "./queue";
-import { flush } from "./scheduler";
+import { flushThenThrow } from "./scheduler";
 import { rt } from "./state";
 
 /**
@@ -38,22 +38,10 @@ export function disposeTree(root: Owner): void {
   }
   // Only the outermost disposal flushes: a nested one (a cleanup disposing another owner) would run
   // effects while the tree it sits in is half torn down.
-  if (
-    rt.running === null &&
-    rt.batchDepth === 0 &&
-    rt.disposing === 0 &&
-    !rt.flushing &&
-    hasPending()
-  ) {
-    try {
-      flush();
-    } catch (error) {
-      if (!failed) throw error;
-      throw new AggregateError(
-        [failure, error],
-        __DEV__ ? "Disposal and the following flush both threw." : "SHADOW_DISPOSE_FLUSH_ERRORS",
-      );
-    }
-  }
-  if (failed) throw failure;
+  flushThenThrow(
+    rt.running === null && rt.batches === 0 && rt.disposing === 0 && !rt.flushing && hasPending(),
+    failed,
+    failure,
+    __DEV__ ? "Disposal and the following flush both threw." : "SHADOW_DISPOSE_FLUSH_ERRORS",
+  );
 }

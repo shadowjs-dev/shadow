@@ -22,33 +22,6 @@ import { isTextOnlyElement } from "./server/raw-text";
 /** Tag shape that `Dynamic` accepts. `script` is refused for the same reason. */
 const TAG_PATTERN = /^[a-z][a-z0-9-]*$/i;
 
-/** `onClick` to `click`, when the key is an event handler name. */
-function eventNameOf(key: string): string | undefined {
-  return key.length > 2 && key.startsWith("on") && /^[A-Z]/.test(key.charAt(2))
-    ? key.slice(2).toLowerCase()
-    : undefined;
-}
-
-/**
- * Binds one listener, read once. A function runs with the element as `this`; a `[fn, data]` tuple
- * receives `data` first. `null`, `undefined` and `false` bind nothing. Handlers run in a batch and
- * untracked, as the event binding of `Dynamic` runs them.
- */
-function bindListener(el: Element, name: string, handler: unknown): void {
-  let call: ((event: Event) => unknown) | undefined;
-  if (typeof handler === "function") {
-    call = (event: Event): unknown => handler.call(el, event);
-  } else if (Array.isArray(handler)) {
-    const [fn, data] = handler as [unknown, unknown];
-    if (typeof fn === "function") call = (event: Event): unknown => fn.call(el, data, event);
-  }
-  if (call === undefined) return;
-  const run = call;
-  el.addEventListener(name, (event: Event): void => {
-    batch(() => untrack(() => run(event)));
-  });
-}
-
 /**
  * Creates one HTML element from a tag name and a props object, without the generic prop runtime of
  * `spread` and `Dynamic`: for a library that renders one fixed element (a link, a button) and wants
@@ -109,9 +82,19 @@ export function element(tag: string, props: object): unknown {
   const el = claimed ?? document.createElement(tag);
   for (const key of Object.keys(props)) {
     if (key === "children" || key === "ref") continue;
-    const event = eventNameOf(key);
-    if (event !== undefined) {
-      bindListener(el, event, read[key]);
+    if (/^on[A-Z]/.test(key)) {
+      // Binds one listener, read once. A function runs with the element as `this`; a `[fn, data]` tuple
+      // receives `data` first. `null`, `undefined` and `false` bind nothing. Handlers run in a batch and
+      // untracked, as the event binding of `Dynamic` runs them.
+      const handler = read[key];
+      const tuple = Array.isArray(handler);
+      // The tuple's data is read once, at bind time, like the handler.
+      const [fn, data]: readonly unknown[] = tuple ? handler : [handler];
+      if (typeof fn === "function") {
+        el.addEventListener(key.slice(2).toLowerCase(), (event: Event): void => {
+          batch(() => untrack(() => (tuple ? fn.call(el, data, event) : fn.call(el, event))));
+        });
+      }
     } else if (key === "style") {
       // The last value written, so a property that leaves the style object is removed (as spread does).
       let applied: unknown;

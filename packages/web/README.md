@@ -25,8 +25,7 @@ you. In `tsconfig.json`, point JSX at this package:
 }
 ```
 
-ShadowJS 1.0.0 is not on npm yet. Until it is published, install it from a local checkout of this
-repository.
+To try a change that is not released yet, install from a local checkout of this repository.
 
 ## Example
 
@@ -176,7 +175,7 @@ type tests are in `packages/web/test-types`.
 ## Dependencies
 
 - Runtime: none.
-- Peers: `@shadow-js/core` `^1.0.0`: the reactive primitives the renderer is built on.
+- Peers: `@shadow-js/core` `^1.0.3`: the reactive primitives the renderer is built on.
 
 ## Types
 

@@ -269,7 +269,7 @@ process, is answered by the Rust one.
 - Runtime `entities` `^8.1.0`: decodes HTML entities in JSX text (`src/internal/lower.ts`).
 - Runtime `oxc-parser` `0.153.0`: parses source into an AST (`src/internal/parse.ts`) in the TypeScript implementation.
 - Runtime `magic-string` `^1.4.3`: applies source edits (the compiler's and the plugins') and is the class of the source map in the result.
-- Optional, one per platform: `@shadow-js/compiler-<platform>` `1.0.0`, the prebuilt addon.
+- Optional, one per platform: `@shadow-js/compiler-<platform>`, the prebuilt addon, at the same version as this package (the list is written into `optionalDependencies` when a release is published).
 - Peers: none.
 
 ## Types
