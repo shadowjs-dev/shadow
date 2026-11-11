@@ -118,6 +118,16 @@ jobs:
             exit 1
           fi
 
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: 2.9.7
+
       - name: Install
         run: node scripts/release.mjs install
 

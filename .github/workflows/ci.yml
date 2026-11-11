@@ -47,6 +47,16 @@ jobs:
       - name: Install the pinned Rust toolchain
         run: rustup show active-toolchain || rustup toolchain install
 
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: 2.9.7
+
       # The packages run on Node 22.12; the tools that build and test them (tsdown, Vitest) need a newer one, so on that leg the engine check of
       # the install is off and the packages are still built and tested there.
       - name: Install

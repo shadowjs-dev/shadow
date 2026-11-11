@@ -25,6 +25,8 @@ You need Node.js 22.12 or newer and npm (pnpm and Yarn are not used).
 The tests also need:
 
 - The Rust toolchain that `rust-toolchain.toml` pins, for the compiler's native addon and WebAssembly build.
+- `bun`: the tests run against it.
+- `deno`: the tests run against it.
 
 A test whose tool or account is missing **fails** with instructions; it is never skipped.
 
