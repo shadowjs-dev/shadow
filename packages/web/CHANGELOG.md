@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.5
+
+### Fixed
+
+- A style array skips `null`, `undefined` and `false` values like the server does, so an earlier entry's property is no longer removed on the client.
+- When `render()` or `hydrate()` throws during its first flush, the root, its effects and (for `render`) its partial DOM are torn down and the error is rethrown; `hydrate` keeps the server markup.
+- `value` on `progress`, `meter` and `li` is written as an attribute through `spread`, so `undefined` leaves no `value="0"` and matches the server.
+
 ## 1.0.4
 
 ### Fixed

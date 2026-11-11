@@ -143,7 +143,13 @@ export function createRoot<T>(fn: (dispose: () => void) => T, options?: RootOpti
   if (detached) root.context = current === null ? null : current.context;
   if (__DEV__) listRoot(root);
   try {
-    return runInScope({ owner: root, listener: null }, () => fn(() => disposeOwner(root)));
+    const result = runInScope({ owner: root, listener: null }, () => fn(() => disposeOwner(root)));
+    // The body disposed its own root and kept going: what it created after that has no owner left to dispose it.
+    if (root.disposed) {
+      disposeOwner(root);
+      root.runCleanups();
+    }
+    return result;
   } catch (error) {
     try {
       disposeOwner(root);

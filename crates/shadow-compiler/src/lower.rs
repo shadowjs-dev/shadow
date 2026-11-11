@@ -104,6 +104,63 @@ const CODE_NAMESPACES: &[&str] = &[
     "style",
 ];
 
+/// Words that are no identifier in module code. A `use:` directive names a function, and its name is
+/// written into the output as one: `use:class` would become `use(class, ...)`.
+const RESERVED_WORDS: &[&str] = &[
+    "await",
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "continue",
+    "debugger",
+    "default",
+    "delete",
+    "do",
+    "else",
+    "enum",
+    "export",
+    "extends",
+    "false",
+    "finally",
+    "for",
+    "function",
+    "if",
+    "implements",
+    "import",
+    "in",
+    "instanceof",
+    "interface",
+    "let",
+    "new",
+    "null",
+    "package",
+    "private",
+    "protected",
+    "public",
+    "return",
+    "static",
+    "super",
+    "switch",
+    "this",
+    "throw",
+    "true",
+    "try",
+    "typeof",
+    "var",
+    "void",
+    "while",
+    "with",
+    "yield",
+];
+
+/// True when the name after `use:` can stand for a function in the output. A JSX name may hold a
+/// hyphen (`use:foo-bar`), which JavaScript reads as a subtraction.
+fn is_directive_name(local: &str) -> bool {
+    !local.contains('-') && !RESERVED_WORDS.contains(&local)
+}
+
 /// Parents whose text the HTML parser reads differently from a text node that is inserted.
 const NO_TEXT_FOLD: &[&str] = &[
     "table",
@@ -510,6 +567,21 @@ impl<'t, 'a> Ctx<'t, 'a> {
             let code_only = name
                 .split_once(':')
                 .is_some_and(|(namespace, _)| CODE_NAMESPACES.contains(&namespace));
+            // On an element the name is written into the output as an identifier (a component receives
+            // it as a prop key).
+            if tag.is_some()
+                && let Some(local) = name.strip_prefix("use:")
+                && !is_directive_name(local)
+            {
+                return fail_span(
+                    "BAD_ATTRIBUTE",
+                    format!(
+                        "Directive \"{name}\" must be named by an identifier of a function (no hyphen, no reserved word)."
+                    ),
+                    attribute.span.start,
+                    attribute.span.end,
+                );
+            }
             let start = attribute.span.start;
             if code_only {
                 match value {

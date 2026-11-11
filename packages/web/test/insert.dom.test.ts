@@ -566,3 +566,73 @@ describe("insert(): dev guards", () => {
     expect(parent.textContent).toBe("c");
   });
 });
+
+/*
+ * `commitValue` in `src/insert.ts` skips flatten and reconcile for a string or number. The skip changes no DOM
+ * result (turning it off leaves these tests green), so what is pinned here is the contract it must keep: one Text
+ * node rewritten in place, one new node for an empty region, the right position, and a correct exit to the general path.
+ */
+describe("insert(): a single dynamic text", () => {
+  it("[INS-FP-01] 100 different strings and numbers rewrite one Text node: no node is created, inserted or removed", () => {
+    const parent = mount();
+    const [value, setValue] = useSignal<unknown>("start");
+    createRoot(() => insert(parent, value));
+    const original = parent.firstChild;
+    const created = vi.spyOn(document, "createTextNode");
+    const spies = spyMutations();
+    for (let index = 0; index < 100; index += 1) {
+      setValue(index % 2 === 0 ? `s${index}` : index);
+      flushSync();
+      expect(parent.firstChild).toBe(original);
+      expect(parent.textContent).toBe(String(index % 2 === 0 ? `s${index}` : index));
+    }
+    expect(parent.childNodes.length).toBe(1);
+    expect(created).not.toHaveBeenCalled();
+    expect(spies.insertBefore).not.toHaveBeenCalled();
+    expect(spies.removeChild).not.toHaveBeenCalled();
+  });
+
+  it("[INS-FP-02] an empty region gets exactly one new Text node in front of its anchor, and so does each refill after null", () => {
+    const parent = mount();
+    const before = element("hr", "before");
+    const marker = element("hr", "marker");
+    const after = element("hr", "after");
+    parent.append(before, marker, after);
+    const [value, setValue] = useSignal<unknown>(null);
+    createRoot(() => insert(parent, value, marker));
+    expect(parent.childNodes.length).toBe(3);
+    const created = vi.spyOn(document, "createTextNode");
+    setValue("x");
+    flushSync();
+    expect(created).toHaveBeenCalledTimes(1);
+    expect(parent.childNodes[1]).toBeInstanceOf(Text);
+    expect(parent.childNodes[1]?.textContent).toBe("x");
+    expect(parent.childNodes[2]).toBe(marker);
+    setValue(null);
+    flushSync();
+    expect(parent.childNodes.length).toBe(3);
+    setValue(0);
+    flushSync();
+    expect(created).toHaveBeenCalledTimes(2);
+    expect(parent.childNodes[1]?.textContent).toBe("0");
+    expect(parent.childNodes[2]).toBe(marker);
+    expect(parent.childNodes[3]).toBe(after);
+  });
+
+  it("[INS-FP-03] a region that holds something other than its own single Text node leaves the fast path and still ends correct", () => {
+    const parent = mount();
+    const node = element("hr");
+    const [value, setValue] = useSignal<unknown>(["a", "b"]);
+    createRoot(() => insert(parent, value));
+    expect(shape(parent)).toEqual(texts("a", "b"));
+    setValue("one");
+    flushSync();
+    expect(shape(parent)).toEqual(texts("one"));
+    setValue(node);
+    flushSync();
+    setValue("two");
+    flushSync();
+    expect(shape(parent)).toEqual(texts("two"));
+    expect(node.parentNode).toBeNull();
+  });
+});

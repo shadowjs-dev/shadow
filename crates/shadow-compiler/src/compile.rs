@@ -296,7 +296,9 @@ fn run(
     tree.walk(0, |node, _| {
         if matches!(tree.ty(node), Ty::Identifier | Ty::JSXIdentifier)
             && let Some(name) = tree.name(node)
-            && (name.starts_with('_') || name.starts_with('$'))
+            // `r$` is the one generated name that does not start with `_` or `$`: the parameter of a
+            // `ref` method, inside which the user's own expression is read.
+            && (name.starts_with('_') || name.starts_with('$') || name == "r$")
         {
             taken.insert(name.to_string());
         }

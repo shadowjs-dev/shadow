@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.5
+
+### Fixed
+
+- The generated `ref` method no longer shadows a module variable named `r$`.
+- A `use:` directive name with a hyphen or a reserved word is a `BAD_ATTRIBUTE` error instead of invalid output.
+- A dynamic `xml:lang` or `xml:space` attribute is set in the XML namespace instead of failing with `UNKNOWN_NAMESPACE`.
+- With `hmr: true`, only components are wrapped for hot updates: a PascalCase function used with `new`, reading `this`, or returning no JSX and no component keeps its exact behavior. An overload signature adds no export.
+- `value` on `progress` and `meter` is an attribute, so `undefined` removes it as on the server.
+- Error positions count CR, CR LF, U+2028 and U+2029 as line ends; positions in LF and CR LF files are unchanged.
+- A plugin edit that splits a surrogate pair is refused with `PLUGIN_EDIT_SPLITS_PAIR`.
+- An unpaired surrogate in `filename` or `moduleName` no longer becomes U+FFFD through the native addon.
+
 ## 1.0.4
 
 ### Changed

@@ -175,7 +175,7 @@ type tests are in `packages/web/test-types`.
 ## Dependencies
 
 - Runtime: none.
-- Peers: `@shadow-js/core` `^1.0.3`: the reactive primitives the renderer is built on.
+- Peers: `@shadow-js/core` `^1.0.5`: the reactive primitives the renderer is built on.
 
 ## Types
 

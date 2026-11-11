@@ -302,7 +302,12 @@ function runPasses(
   walk(program, (node, parent) => {
     if (node.type === "Identifier" || node.type === "JSXIdentifier") {
       const name = node["name"];
-      if (typeof name === "string" && (name.startsWith("_") || name.startsWith("$")))
+      // `r$` is the one generated name that does not start with `_` or `$`: the parameter of a `ref` method
+      // (see `refStatement`), inside which the user's own expression is read.
+      if (
+        typeof name === "string" &&
+        (name.startsWith("_") || name.startsWith("$") || name === "r$")
+      )
         taken.add(name);
     }
     noteParentheses(node, parent, parenthesized);

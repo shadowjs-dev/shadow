@@ -228,9 +228,13 @@ export function writeRaw(target: object, key: string, value: unknown): boolean {
   return true;
 }
 
-/** Deletes one own property of a raw object and notifies its signal and the key set. */
-export function deleteRaw(target: object, key: string): boolean {
-  if (isReservedKey(key)) {
+/**
+ * Deletes one own property of a raw object and notifies its signal and the key set. A reserved key is
+ * refused unless `cleanup` is set: removing an own data property named `__proto__` (it arrived in parsed
+ * JSON) cannot reach a prototype, and `reconcile` must be able to clear it like any other stale key.
+ */
+export function deleteRaw(target: object, key: string, cleanup = false): boolean {
+  if (!cleanup && isReservedKey(key)) {
     throw new TypeError(
       __DEV__
         ? `ShadowStore: "${key}" cannot be deleted; it is a reserved key`

@@ -124,9 +124,9 @@ export default defineConfig({
 
 ## Hot updates
 
-The plugin turns on the compiler's `hmr` option in `vite dev` (never in a build, for SSR transforms
-or under a test runner). The compiled module registers its top-level components with
-`@shadow-js/web/hmr`, so an edit re-renders the instances of the edited component while parents and
+The plugin turns on the compiler's `hmr` option in `vite dev` (not in a build unless `dev: true` forces development output,
+never for SSR transforms, and not under a test runner unless `hmr: true` asks for it; `hmr: false` or `dev: false` turns it
+off). The compiled module registers its top-level components with `@shadow-js/web/hmr`, so an edit re-renders the instances of the edited component while parents and
 siblings keep their state; a module that exports only components accepts its own update. This is
 covered by the unit tests of the compiler and of the plugin (`[HMR-01]` to `[HMR-06]`, `[VIT-04]`).
 The browser test tier also exercises hot updates in a real browser.

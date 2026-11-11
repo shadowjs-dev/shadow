@@ -188,6 +188,67 @@ const CODE_NAMESPACES = new Set([
 
 const ENUMERATED_ATTRIBUTES = new Set(["draggable", "spellcheck", "contenteditable"]);
 
+/**
+ * Words that are no identifier in module code. A `use:` directive names a function, and its name is written
+ * into the output as one: `use:class` would become `use(class, ...)`.
+ */
+const RESERVED_WORDS = new Set([
+  "await",
+  "break",
+  "case",
+  "catch",
+  "class",
+  "const",
+  "continue",
+  "debugger",
+  "default",
+  "delete",
+  "do",
+  "else",
+  "enum",
+  "export",
+  "extends",
+  "false",
+  "finally",
+  "for",
+  "function",
+  "if",
+  "implements",
+  "import",
+  "in",
+  "instanceof",
+  "interface",
+  "let",
+  "new",
+  "null",
+  "package",
+  "private",
+  "protected",
+  "public",
+  "return",
+  "static",
+  "super",
+  "switch",
+  "this",
+  "throw",
+  "true",
+  "try",
+  "typeof",
+  "var",
+  "void",
+  "while",
+  "with",
+  "yield",
+]);
+
+/**
+ * True when the name after `use:` can stand for a function in the output. A JSX name may hold a hyphen
+ * (`use:foo-bar`), which JavaScript reads as a subtraction.
+ */
+function isDirectiveName(local: string): boolean {
+  return !local.includes("-") && !RESERVED_WORDS.has(local);
+}
+
 /** True for names whose boolean value is the text "true"/"false", not presence/absence. */
 function writesBooleanAsText(name: string): boolean {
   const lower = name.toLowerCase();
@@ -384,6 +445,15 @@ function lowerAttrs(
     }
     const colon = name.indexOf(":");
     const codeOnly = colon !== -1 && CODE_NAMESPACES.has(name.slice(0, colon));
+    // On an element the name is written into the output as an identifier (a component receives it as a prop key).
+    if (tag !== null && name.startsWith("use:") && !isDirectiveName(name.slice(4))) {
+      fail(
+        ctx,
+        "BAD_ATTRIBUTE",
+        `Directive "${name}" must be named by an identifier of a function (no hyphen, no reserved word).`,
+        attribute,
+      );
+    }
     if (codeOnly && value !== null) {
       const inner = value.type === "JSXExpressionContainer" ? nodeAt(value, "expression") : value;
       if (inner === null || inner.type === "JSXEmptyExpression") {

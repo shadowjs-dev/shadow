@@ -72,7 +72,20 @@ export class CompileError extends Error {
 }
 
 /**
+ * Whether the unit at `index` ends a line, as in ECMAScript: LF, CR (but a CR that is followed by LF
+ * belongs to the CR LF pair, which the LF ends), U+2028 and U+2029.
+ */
+function endsLine(source: string, index: number): boolean {
+  const unit = source.charCodeAt(index);
+  if (unit === 10 || unit === 0x2028 || unit === 0x2029) return true;
+  return unit === 13 && source.charCodeAt(index + 1) !== 10;
+}
+
+/**
  * Converts an offset into a line and column.
+ *
+ * A line ends at LF, CR LF, a lone CR, U+2028 or U+2029. A CR that comes right before an LF is part of
+ * the line it ends, so the positions in a file with CR LF line ends are those of the same file with LF.
  *
  * @param source The module text.
  * @param offset UTF-16 offset into `source`. An offset past the end counts as the end for the
@@ -86,7 +99,7 @@ export function locate(source: string, offset: number): { line: number; column: 
   let lineStart = 0;
   const limit = Math.min(offset, source.length);
   for (let i = 0; i < limit; i += 1) {
-    if (source.charCodeAt(i) === 10) {
+    if (endsLine(source, i)) {
       line += 1;
       lineStart = i + 1;
     }
@@ -106,8 +119,11 @@ export function locate(source: string, offset: number): { line: number; column: 
  */
 export function codeFrame(source: string, offset: number): string {
   const { line, column } = locate(source, offset);
-  const text = source.split("\n")[line - 1] ?? "";
-  return `${String(line).padStart(4)} | ${text}\n     | ${" ".repeat(column)}^`;
+  // The column is measured from the start of the line, also for an offset past the end.
+  const start = offset - column;
+  let end = start;
+  while (end < source.length && !endsLine(source, end)) end += 1;
+  return `${String(line).padStart(4)} | ${source.slice(start, end)}\n     | ${" ".repeat(column)}^`;
 }
 
 /**

@@ -225,7 +225,14 @@ export function style(el: HTMLElement | SVGElement, value: unknown, prev?: unkno
             __DEV__ ? "style(): an array holds only strings and objects." : "SHADOW_STYLE_ITEM",
           );
         }
-        style(el, item, {});
+        // A null, undefined or false value declares nothing here, as on the server: `style` would remove
+        // the property, which erases what an earlier source of the array wrote.
+        const declared: Record<string, unknown> = {};
+        for (const key of Object.keys(item)) {
+          const part = unwrap((item as Record<string, unknown>)[key]);
+          if (part !== null && part !== undefined && part !== false) declared[key] = part;
+        }
+        style(el, declared, {});
       }
     }
     return resolved;

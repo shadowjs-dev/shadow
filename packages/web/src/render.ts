@@ -42,29 +42,45 @@ export function render(
   options?: RenderOptions,
 ): () => void {
   const region = createRegion(container, null, undefined);
+  let stop: (() => void) | undefined;
+  let disposed = false;
+  const teardown = (): void => {
+    if (disposed) return;
+    disposed = true;
+    stop?.();
+    removeRegion(region);
+  };
   // One batch around the build: effects (and anything a resource's batch would flush mid-build)
   // wait until the whole tree exists, so a Suspense boundary knows what is pending before its
   // content's effects are considered.
   // A fresh root never consumes the enclosing hydration pass's nodes or key sequence.
-  const stop = claims.current.withoutClaiming(() =>
-    withScope(null, () =>
-      batch(() =>
-        createRoot((dispose) => {
-          // An error nothing else took ends here; with onUncaughtError it is reported instead of thrown.
-          if (options !== undefined) attachRootErrors(options);
-          // The component tree is built once; only accessors inside the result stay reactive.
-          bindRegion(region, untrack(code));
-          return dispose;
-        }),
+  try {
+    claims.current.withoutClaiming(() =>
+      withScope(null, () =>
+        batch(() =>
+          createRoot((dispose) => {
+            stop = dispose;
+            // An error nothing else took ends here; with onUncaughtError it is reported instead of thrown.
+            if (options !== undefined) attachRootErrors(options);
+            // The component tree is built once; only accessors inside the result stay reactive.
+            bindRegion(region, untrack(code));
+          }),
+        ),
       ),
-    ),
-  );
-  flushSync();
-  let disposed = false;
-  return () => {
-    if (disposed) return;
-    disposed = true;
-    stop();
-    removeRegion(region);
-  };
+    );
+    flushSync();
+  } catch (error) {
+    // The caller gets no dispose function from a render that throws (an effect of the first flush failed),
+    // so the root must not stay alive with its DOM and effects.
+    try {
+      teardown();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        __DEV__ ? "render() failed and so did its teardown." : "SHADOW_RENDER_ERRORS",
+      );
+    }
+    throw error;
+  }
+  return teardown;
 }

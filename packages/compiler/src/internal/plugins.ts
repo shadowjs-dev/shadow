@@ -496,6 +496,23 @@ function runPlugin(plugin: CompilerPlugin, stage: PluginStage, state: PluginStat
     }
   };
 
+  /**
+   * Refuses an edit whose boundary lies between the two halves of a surrogate pair: the module would
+   * keep two lone surrogates, text no parser or editor can show as the character it was.
+   */
+  const checkBoundary = (at: number, range: PluginRange): void => {
+    if (at <= 0 || at >= state.text.length) return;
+    const before = state.text.charCodeAt(at - 1);
+    const after = state.text.charCodeAt(at);
+    if (before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff) {
+      throw fail(
+        "PLUGIN_EDIT_SPLITS_PAIR",
+        `an edit boundary at ${at} splits a surrogate pair; move it before or after the character.`,
+        range,
+      );
+    }
+  };
+
   const count = (): void => {
     edits += 1;
     if (edits > MAX_EDITS) {
@@ -505,6 +522,7 @@ function runPlugin(plugin: CompilerPlugin, stage: PluginStage, state: PluginStat
 
   const insertAt = (at: number, code: string): void => {
     if (typeof code !== "string") throw new TypeError("edit text must be a string.");
+    checkBoundary(at, { start: at, end: at });
     count();
     if (code !== "") inserts.push({ at, code });
   };
@@ -516,6 +534,8 @@ function runPlugin(plugin: CompilerPlugin, stage: PluginStage, state: PluginStat
       insertAt(range.start, code);
       return;
     }
+    checkBoundary(range.start, range);
+    checkBoundary(range.end, range);
     count();
     const type = (range as { type?: unknown }).type;
     replacements.set(`${range.start}:${range.end}`, {

@@ -105,7 +105,7 @@ The environment can ask for one:
 | `SHADOW_COMPILER_WASM_PATH` | A `.wasm` file to load instead of the one in this package. |
 
 A call the Rust core cannot answer exactly goes to the TypeScript implementation, so the result never differs: a call with `plugins`
-(they are JavaScript functions that edit the syntax tree), an input with an unpaired surrogate, options of an unusual type, or nesting
+(they are JavaScript functions that edit the syntax tree), an input with an unpaired surrogate (in the source, `filename` or `moduleName`), options of an unusual type, or nesting
 deeper than the Rust implementation follows. An addon that exists but fails to load is reported once as a process warning
 (`SHADOW_COMPILER_BACKEND_FALLBACK`) and the next implementation is used.
 
@@ -223,7 +223,7 @@ Two other tools did the same jobs on the same modules, for scale:
 
 `babel-preset-solid` makes Solid's output, which is the closest thing to what this compiler makes, and it is slower than
 the TypeScript implementation on these inputs. `oxc-transform` only parses, rewrites JSX to function calls and prints; it does
-not build templates or analyze reactivity, so it is faster than this compiler by about four times, and it shows how
+not build templates or analyze reactivity, so it is faster than this compiler by about 3.5 to 4 times, and it shows how
 fast "parse, transform and print" can be on this machine.
 
 Method. Apple M5 Pro, 15 cores, 48 GiB, macOS 27.0, Node.js 26.10.0, Rust 1.97.0, `@babel/core` 7.29.7,

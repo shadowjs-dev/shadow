@@ -143,18 +143,26 @@ export function hydrate(
   claims.current = passClaims;
   const cache = dataCache(options.data ?? {});
   const region = createRegion(container, null, Array.from(container.childNodes));
-  let stop: () => void;
+  let stop: (() => void) | undefined;
+  let disposed = false;
+  const teardown = (): void => {
+    if (disposed) return;
+    disposed = true;
+    stop?.();
+    removeRegion(region);
+  };
   try {
     // The batch wraps the scope, not the other way round: its exit flushes the queued effects
     // (onMount, and the re-renders they cause) after the scope is restored. The scope numbers only
     // the templates the server rendered; an effect that builds new DOM must not draw keys from it
     // (that shifts the keys of later siblings and misses the ones the server never sent). Boundaries
     // rebuild from their own captured scope, so a reset inside the pass still claims its elements.
-    stop = withHydration(() =>
+    withHydration(() =>
       batch(() =>
         withScope(createRootScope(options.renderId), () =>
           runWithOwner(options.owner ?? null, () =>
             createRoot((dispose) => {
+              stop = dispose;
               attachRootErrors(options);
               ResourceCacheContext({
                 value: cache,
@@ -163,24 +171,29 @@ export function hydrate(
                   return null;
                 },
               });
-              return dispose;
             }),
           ),
         ),
       ),
     );
     flushSync();
+  } catch (error) {
+    // The caller gets no dispose function from a hydration that throws, so the root must not stay alive. Its
+    // effects and listeners go; the server's markup stays, so the page keeps what the server rendered.
+    try {
+      stop?.();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        __DEV__ ? "hydrate() failed and so did its teardown." : "SHADOW_HYDRATE_ERRORS",
+      );
+    }
+    throw error;
   } finally {
     endClaiming();
     claims.current = previousClaims;
   }
   replayEarlyEvents();
   stripLeftovers(container);
-  let disposed = false;
-  return () => {
-    if (disposed) return;
-    disposed = true;
-    stop();
-    removeRegion(region);
-  };
+  return teardown;
 }

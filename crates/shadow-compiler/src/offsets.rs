@@ -59,23 +59,54 @@ pub struct LineIndex<'a> {
     starts: Vec<usize>,
 }
 
+/// Whether `c` ends a line in ECMAScript: LF, CR, U+2028 and U+2029. A CR that comes right before an
+/// LF belongs to the CR LF pair, which the LF ends (`next` is the character after `c`).
+#[must_use]
+pub fn ends_line(c: char, next: Option<char>) -> bool {
+    match c {
+        '\n' | '\u{2028}' | '\u{2029}' => true,
+        '\r' => next != Some('\n'),
+        _ => false,
+    }
+}
+
 impl<'a> LineIndex<'a> {
-    /// Indexes the `\n` line starts of `source`.
+    /// Indexes the line starts of `source`: after each LF, lone CR, U+2028 and U+2029.
     #[must_use]
     pub fn new(source: &'a str) -> Self {
         let mut starts = vec![0];
-        for (index, byte) in source.bytes().enumerate() {
-            if byte == b'\n' {
-                starts.push(index + 1);
+        let mut chars = source.char_indices().peekable();
+        while let Some((index, c)) = chars.next() {
+            if ends_line(c, chars.peek().map(|&(_, next)| next)) {
+                starts.push(index + c.len_utf8());
             }
         }
         LineIndex { source, starts }
     }
 
+    /// The text of the 0-based `line` without its terminator. The CR of a CR LF pair stays: it is a
+    /// character of the line it ends, as it is in the column.
+    #[must_use]
+    pub fn line_text(&self, line: usize) -> &'a str {
+        let Some(&start) = self.starts.get(line) else {
+            return "";
+        };
+        let end = self
+            .starts
+            .get(line + 1)
+            .copied()
+            .unwrap_or(self.source.len());
+        let text = self.source.get(start..end).unwrap_or("");
+        match text.chars().next_back() {
+            Some(last) if ends_line(last, None) => &text[..text.len() - last.len_utf8()],
+            _ => text,
+        }
+    }
+
     /// The 1-based line and the 0-based UTF-16 column of the byte offset.
     ///
-    /// Like the JavaScript `locate`: only `\n` ends a line, and an offset past the end keeps
-    /// growing the column of the last line.
+    /// Like the JavaScript `locate`: a line ends at LF, CR LF, a lone CR, U+2028 or U+2029, and an
+    /// offset past the end keeps growing the column of the last line.
     #[must_use]
     pub fn locate(&self, byte: usize) -> (usize, usize) {
         let limit = byte.min(self.source.len());

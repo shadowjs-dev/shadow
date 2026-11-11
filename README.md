@@ -37,14 +37,25 @@ render(() => <Counter />, document.getElementById("app")!);
 ## Principles
 
 - **Strict where it matters, forgiving where mistakes are common.** Signals are explicit functions.
-  Constants computed from signals, destructured props and accessors passed as values still work.
-- **Real DOM, no comments, no placeholders.** The live DOM contains only what you wrote.
-- **Same code on client and server.** `renderToString` / `renderToStringAsync` and `hydrate`
-  reuse the server's nodes; the compiled output is identical for client rendering and hydration.
-- **Scales.** Generated multi-file apps of 400 components are checked against an independent
-  oracle; 20,000-row lists move nodes, never recreate them; mount/unmount cycles do not leak.
-- **Secure by construction.** Escaping in the compiler and in the runtime, URL scheme blocking,
-  no `eval`, prototype-pollution-safe parsers.
+  A constant computed from signals (`const double = count() * 2`) and destructured props stay live:
+  the compiler derives them.
+- **Real DOM, no comments.** Rendered output contains no comment nodes. Where a dynamic region needs a
+  position marker, the runtime uses an empty text node, which adds no markup. Server HTML carries
+  hydration keys and region markers; `hydrate` removes them. Tags added through the head API carry a
+  `data-shadow-head` attribute.
+- **Same code on client and server.** `renderToString` and `renderToStringAsync` produce the HTML, and
+  `hydrate` claims the server's existing nodes instead of recreating them. Client rendering and
+  hydration run the same `dom` output of the compiler; server rendering uses its `ssr` output.
+- **Tested at scale.** A generated app of 400 components in 402 files matches an independent oracle (the
+  expected HTML, computed without the framework) after every random update. A list of 20,000 rows is reversed, shuffled and halved by moving
+  the existing nodes. 1,000 mount/unmount cycles of a compiled app leave no DOM behind and grow the
+  heap by less than 10 MiB.
+- **Escaping and URL checks built in.** The server renderer escapes dynamic text and attribute values,
+  and the compiler escapes the static text it folds into templates. `javascript:` URLs, also when
+  disguised with whitespace or control characters, are not written to URL attributes. The packages'
+  source and built output contain no `eval` or `new Function`, and lint rejects `eval`. Parsers for
+  forms, cookies, query strings, JSON bodies and stores treat `__proto__` as plain data or refuse it.
+  Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 
 ## What is in this repository
 

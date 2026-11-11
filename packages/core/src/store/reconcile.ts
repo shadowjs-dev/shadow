@@ -174,7 +174,7 @@ function mergeObject(
   }
   if (spec.merge) return;
   for (const key of Object.keys(target)) {
-    if (!Object.hasOwn(source, key)) deleteRaw(target, key);
+    if (!Object.hasOwn(source, key)) deleteRaw(target, key, true);
   }
 }
 

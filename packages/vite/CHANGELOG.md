@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.5
+
+### Fixed
+
+- MDX compile errors and warnings no longer report positions of the generated JSX as positions of the `.mdx` file.
+- MDX source maps point at the `.mdx` file for imports, exports and copied JavaScript.
+
 ## 1.0.4
 
 ### Changed

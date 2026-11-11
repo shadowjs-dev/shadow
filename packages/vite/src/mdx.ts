@@ -1,6 +1,12 @@
 import { CompileError, type CompilerPlugin, compile, validatePlugins } from "@shadow-js/compiler";
 import type { Plugin } from "vite";
 import { moduleFile } from "./internal/ids";
+import {
+  composeToSource,
+  MappingCollector,
+  mapOfSource,
+  type RawMap,
+} from "./internal/source-maps";
 
 /**
  * `shadowMdx()`: a Vite plugin that turns `.mdx` (and `.md`) files into ShadowJS components. MDX is compiled to JSX by
@@ -13,6 +19,8 @@ import { moduleFile } from "./internal/ids";
 /** The file `@mdx-js/mdx` answers: a `VFile`, whose `value` holds the code. */
 interface MdxOutput {
   readonly value: string | Uint8Array;
+  /** The source map of `value` to the MDX file, when the options carried a `SourceMapGenerator` that records one. */
+  readonly map?: unknown;
 }
 
 /** What `compile` of `@mdx-js/mdx` accepts (the options this plugin sets, and the lists it hands on). */
@@ -26,6 +34,8 @@ interface MdxCompileOptions {
   readonly recmaPlugins?: readonly unknown[];
   readonly remarkRehypeOptions?: Readonly<Record<string, unknown>>;
   readonly providerImportSource?: string;
+  /** Asks for a source map from the JSX to the MDX file (`file.map` of the answer). */
+  readonly SourceMapGenerator: typeof MappingCollector;
 }
 
 /** `compile` of `@mdx-js/mdx`, or a function with its shape. @since 1.0.0 */
@@ -272,6 +282,7 @@ export function shadowMdx(options: ShadowMdxOptions = {}): Plugin {
           : loadMdx(options.mdx ?? "@mdx-js/mdx");
       const mdx = await compileMdx;
       let jsx: string;
+      let mdxMap: RawMap | undefined;
       try {
         const output = await mdx(
           { value: code, path: file },
@@ -299,12 +310,14 @@ export function shadowMdx(options: ShadowMdxOptions = {}): Plugin {
             ...(options.providerImportSource === undefined
               ? {}
               : { providerImportSource: options.providerImportSource }),
+            SourceMapGenerator: MappingCollector,
           },
         );
         jsx =
           typeof output.value === "string"
             ? output.value
             : Buffer.from(output.value).toString("utf8");
+        mdxMap = rawMapOf(output.map);
       } catch (error) {
         const found = error as Positioned;
         const position =
@@ -323,27 +336,42 @@ export function shadowMdx(options: ShadowMdxOptions = {}): Plugin {
           ...(options.moduleName === undefined ? {} : { moduleName: options.moduleName }),
           ...(plugins.length > 0 ? { plugins } : {}),
         });
+        // The positions of the JSX pass are those of the JSX that `@mdx-js/mdx` wrote, not of the MDX file the build
+        // names: passed on, they would point at lines and columns of the generated code (the message carries them).
         for (const diagnostic of result.diagnostics) {
-          if (diagnostic.severity === "warning") {
-            this.warn(diagnostic.message, { line: diagnostic.line, column: diagnostic.column });
-          }
+          if (diagnostic.severity === "warning") this.warn(diagnostic.message);
         }
+        // Without JSX to compile the code is what `@mdx-js/mdx` wrote, and its own map already points at the file.
+        if (!result.transformed) {
+          return { code: jsx, map: mdxMap === undefined ? null : mapOfSource(mdxMap, file, code) };
+        }
+        // A map from the final code to the JSX is of no use to a debugger: compose it with the one from the JSX
+        // to the MDX file. When `@mdx-js/mdx` (or a replacement given as `mdx`) answered no map, it stays as it was.
         return {
-          code: result.transformed ? result.code : jsx,
-          map: result.transformed ? result.map : null,
+          code: result.code,
+          map:
+            result.map === null || mdxMap === undefined
+              ? result.map
+              : composeToSource(result.map, mdxMap, file, code),
         };
       } catch (error) {
-        if (error instanceof CompileError) {
-          return this.error(
-            error.message,
-            error.diagnostic.line === 0
-              ? undefined
-              : { line: error.diagnostic.line, column: error.diagnostic.column },
-          );
-        }
+        if (error instanceof CompileError) return this.error(error.message);
         throw error;
       }
     },
+  };
+}
+
+/** Reads the map `@mdx-js/mdx` answers with, or `undefined` when it gave none that can be used. */
+function rawMapOf(value: unknown): RawMap | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const { mappings, names } = value as { mappings?: unknown; names?: unknown };
+  if (typeof mappings !== "string") return undefined;
+  return {
+    mappings,
+    names: Array.isArray(names)
+      ? names.filter((name): name is string => typeof name === "string")
+      : [],
   };
 }
 

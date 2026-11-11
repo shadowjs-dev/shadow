@@ -334,6 +334,40 @@ describe("edits", () => {
     expect(error.diagnostic.code).toBe("PLUGIN_TOO_MANY_EDITS");
   });
 
+  it("[PLG-46] an edit that splits a surrogate pair is PLUGIN_EDIT_SPLITS_PAIR", () => {
+    // The emoji is two UTF-16 units at 9 and 10; a boundary at 10 is between them.
+    const text = "let s = '\u{1F600}';\n";
+    const attempts: Array<(c: PluginContext) => void> = [
+      (c) => c.replace({ start: 9, end: 10 }, "x"),
+      (c) => c.replace({ start: 10, end: 11 }, "x"),
+      (c) => c.remove({ start: 10, end: 12 }),
+      (c) => c.insertBefore({ start: 10, end: 11 }, "x"),
+      (c) => c.insertAfter({ start: 9, end: 10 }, "x"),
+      (c) => c.replace({ start: 10, end: 10 }, "x"),
+    ];
+    for (const attempt of attempts) {
+      const error = failure(() => edit(attempt, text));
+      expect(error.diagnostic.code).toBe("PLUGIN_EDIT_SPLITS_PAIR");
+      expect(error.diagnostic.plugin).toBe("edit");
+      expect(error.message).toContain("surrogate pair");
+      expect(error.diagnostic.line).toBe(1);
+    }
+  });
+
+  it("[PLG-47] edits on both sides of a surrogate pair, or around a lone surrogate, are accepted", () => {
+    const text = "let s = '\u{1F600}';\n";
+    expect(edit((c) => c.replace({ start: 9, end: 11 }, "x"), text)).toBe("let s = 'x';\n");
+    expect(edit((c) => c.insertBefore({ start: 9, end: 11 }, "a"), text)).toBe(
+      "let s = 'a\u{1F600}';\n",
+    );
+    expect(edit((c) => c.insertAfter({ start: 9, end: 11 }, "a"), text)).toBe(
+      "let s = '\u{1F600}a';\n",
+    );
+    // A high surrogate that is not followed by a low one is not a pair: its edges are fine.
+    const lone = "let s = '\uD83D' + '\uDE00';\n";
+    expect(edit((c) => c.insertBefore({ start: 10, end: 10 }, "/*x*/"), lone)).toContain("/*x*/");
+  });
+
   it("[PLG-21] edited text that does not parse is PLUGIN_INVALID_OUTPUT at the original place", () => {
     const error = failure(() =>
       compile("const a = 1;\nconst b = 2;\n", {

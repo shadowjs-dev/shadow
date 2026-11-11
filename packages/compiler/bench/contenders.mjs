@@ -2,8 +2,13 @@
  * The compilers the benchmark compares. Each contender has a `prepare()` that loads it (outside the
  * timing) and returns `compile(filename, source) -> string`, the generated code.
  *
- * - `js`: `@shadow-js/compiler`, the TypeScript compiler (its built output, as published).
+ * - `js`: `@shadow-js/compiler/javascript`, the TypeScript compiler (its built output, as published). It is the
+ *   entry that never loads the addon or the WebAssembly build, so it is the TypeScript implementation whatever is
+ *   installed; `@shadow-js/compiler` itself would pick the addon, and the comparison with `native` would be 1x.
  * - `native`: `@shadow-js/compiler` through its public API (addon, source map object included).
+ *
+ * The compile function of `js`, `native` and `wasm` carries `backend`, the name of the implementation that
+ * answers it, so a run (and a test) can check that each contender measures what its label says.
  * - `addon`: the Rust addon called directly, without the JavaScript wrapper.
  * - `wasm`: `@shadow-js/compiler` running its WebAssembly build.
  * - `solid`: `@babel/core` with `babel-preset-solid`, the transform of Solid, on the same JSX.
@@ -23,20 +28,34 @@ async function importBuilt(path) {
   return await import(pathToFileURL(join(repository, path)).href);
 }
 
+/** Marks a compile function with the implementation that answers it. */
+function withBackend(compile, backend) {
+  compile.backend = backend;
+  return compile;
+}
+
 export const CONTENDERS = {
   js: {
     label: "@shadow-js/compiler (TypeScript)",
     async prepare() {
-      const { compile } = await importBuilt("packages/compiler/dist/prod/index.js");
-      return (filename, source) => compile(source, { filename }).code;
+      const { compile, getBackend } = await importBuilt(
+        "packages/compiler/dist/prod/javascript.js",
+      );
+      return withBackend(
+        (filename, source) => compile(source, { filename }).code,
+        getBackend().name,
+      );
     },
   },
   native: {
     label: "@shadow-js/compiler (Rust addon)",
     async prepare() {
       process.env.SHADOW_COMPILER_BACKEND = "native";
-      const { compile } = await importBuilt("packages/compiler/dist/prod/index.js");
-      return (filename, source) => compile(source, { filename }).code;
+      const { compile, getBackend } = await importBuilt("packages/compiler/dist/prod/index.js");
+      return withBackend(
+        (filename, source) => compile(source, { filename }).code,
+        getBackend().name,
+      );
     },
   },
   addon: {
@@ -61,8 +80,11 @@ export const CONTENDERS = {
     label: "@shadow-js/compiler (WebAssembly)",
     async prepare() {
       process.env.SHADOW_COMPILER_BACKEND = "wasm";
-      const { compile } = await importBuilt("packages/compiler/dist/prod/index.js");
-      return (filename, source) => compile(source, { filename }).code;
+      const { compile, getBackend } = await importBuilt("packages/compiler/dist/prod/index.js");
+      return withBackend(
+        (filename, source) => compile(source, { filename }).code,
+        getBackend().name,
+      );
     },
   },
   solid: {

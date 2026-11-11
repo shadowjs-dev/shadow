@@ -1,7 +1,7 @@
 //! Located problems in a source module, in the form the JavaScript compiler reports them.
 
 use crate::error::Fail;
-use crate::offsets::{LineIndex, utf16_offset};
+use crate::offsets::{LineIndex, ends_line, utf16_offset};
 use crate::origin::{Origin, trace_end, trace_start};
 
 /// A located problem in a source module. Offsets count UTF-16 code units, like string indexes.
@@ -59,22 +59,24 @@ pub fn code_frame(source: &str, start: usize) -> String {
 
 /// The excerpt of the 1-based `line` with a caret under the 0-based `column`.
 fn frame_at(source: &str, line: usize, column: usize) -> String {
-    let text = source.split('\n').nth(line - 1).unwrap_or("");
+    let text = LineIndex::new(source).line_text(line - 1);
     format!("{line:>4} | {text}\n     | {}^", " ".repeat(column))
 }
 
-/// The 1-based line and the 0-based column of a UTF-16 offset, like the JavaScript `locate`: only
-/// `\n` ends a line, and an offset past the end keeps growing the column of the last line.
+/// The 1-based line and the 0-based column of a UTF-16 offset, like the JavaScript `locate`: a line
+/// ends at LF, CR LF, a lone CR, U+2028 or U+2029, and an offset past the end keeps growing the column
+/// of the last line.
 fn locate_utf16(source: &str, offset: usize) -> (usize, usize) {
     let mut line = 1;
     let mut line_start = 0;
     let mut units = 0;
-    for c in source.chars() {
+    let mut chars = source.chars().peekable();
+    while let Some(c) = chars.next() {
         if units >= offset {
             break;
         }
         units += c.len_utf16();
-        if c == '\n' {
+        if ends_line(c, chars.peek().copied()) {
             line += 1;
             line_start = units;
         }

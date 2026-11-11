@@ -1,6 +1,6 @@
 {
   "name": "@shadow-js/core",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Signals, stores, memos and effects that update exactly what changed",
   "license": "MIT",
   "type": "module",
@@ -120,7 +120,7 @@
     "@types/node": "^24.0.0",
     "esbuild": "0.27.0",
     "fast-check": "^4.10.2",
-    "happy-dom": "^21.0.3",
+    "happy-dom": "21.0.4",
     "tsdown": "0.23.0",
     "typescript": "7.0.2",
     "vitest": "5.0.3"

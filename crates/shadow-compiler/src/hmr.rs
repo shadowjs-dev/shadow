@@ -3,17 +3,19 @@
 //! Modules that export anything other than components are left to the bundler's normal propagation
 //! (their importers reload).
 
+use std::collections::HashSet;
+
 use oxc_ast::ast::{
     BindingPattern, Declaration, ExportDefaultDeclarationKind, Expression, Function, FunctionType,
     ImportOrExportKind, ModuleExportName, Program, Statement, VariableDeclaration,
 };
 
-use crate::classify::ix_of_expression;
+use crate::classify::{ix_of_expression, node_ix};
 use crate::error::{Result, unsupported};
 use crate::jsutil::json_string;
 use crate::magic::MagicString;
 use crate::registry::Registry;
-use crate::tree::{NodeIx, Tree};
+use crate::tree::{NodeIx, Tree, Ty};
 
 /// `/^[A-Z][A-Za-z0-9_$]*$/`.
 fn is_component_name(name: &str) -> bool {
@@ -40,6 +42,10 @@ enum Placement {
 
 struct Declared {
     name: String,
+    /// The function itself, which the component test reads.
+    function: NodeIx,
+    /// True when an `export` declares it, which a function that is left unwrapped must still report.
+    exported: bool,
     placement: Placement,
 }
 
@@ -77,6 +83,8 @@ fn collect_function(
         Some(name) if is_component_name(name) && is_plain_function(function) => {
             out.push(Declared {
                 name: name.to_string(),
+                function: node_ix(function.node_id()),
+                exported: false,
                 placement: Placement::After(end),
             });
         }
@@ -102,6 +110,8 @@ fn collect_variables(
                 let init_ix: NodeIx = ix_of_expression(init);
                 out.push(Declared {
                     name: name.to_string(),
+                    function: init_ix,
+                    exported: false,
                     placement: Placement::Init(
                         tree.start(init_ix) as usize,
                         tree.end(init_ix) as usize,
@@ -178,6 +188,239 @@ fn is_runtime_namespace(declaration: &Declaration<'_>) -> bool {
     }
 }
 
+/// The expression a parenthesis or a TypeScript wrapper (`as`, `satisfies`, `!`) holds, repeatedly.
+fn bare(tree: &Tree<'_>, node: NodeIx) -> NodeIx {
+    let mut current = node;
+    while matches!(
+        tree.ty(current),
+        Ty::ParenthesizedExpression
+            | Ty::TSAsExpression
+            | Ty::TSSatisfiesExpression
+            | Ty::TSNonNullExpression
+    ) {
+        match tree.children(current).next() {
+            Some(inner) => current = inner,
+            None => break,
+        }
+    }
+    current
+}
+
+/// The name of an identifier node, else `None`.
+fn identifier_name<'a>(tree: &Tree<'a>, node: NodeIx) -> Option<&'a str> {
+    if tree.ty(node) == Ty::Identifier {
+        tree.name(node)
+    } else {
+        None
+    }
+}
+
+/// True when `function` reads `this` (its own, or the one it closes over, through arrows). A regular
+/// function or a class body has a `this` of its own.
+fn uses_this(tree: &Tree<'_>, function: NodeIx) -> bool {
+    let mut found = false;
+    tree.walk(function, |node, _| {
+        if found {
+            return false;
+        }
+        let ty = tree.ty(node);
+        if ty == Ty::ThisExpression {
+            found = true;
+            return false;
+        }
+        node == function
+            || !matches!(
+                ty,
+                Ty::FunctionExpression | Ty::FunctionDeclaration | Ty::ClassBody
+            )
+    });
+    found
+}
+
+/// The expressions `function` returns: an arrow's expression body, and the argument of each
+/// `return` that belongs to `function`.
+fn returned(tree: &Tree<'_>, function: NodeIx) -> Vec<NodeIx> {
+    let Some(body) = tree.last_child(function) else {
+        return Vec::new();
+    };
+    if tree.ty(body) != Ty::BlockStatement {
+        return vec![body];
+    }
+    let mut out = Vec::new();
+    tree.walk(body, |node, _| {
+        let ty = tree.ty(node);
+        if ty == Ty::ReturnStatement {
+            if let Some(argument) = tree.last_child(node) {
+                out.push(argument);
+            }
+            return false;
+        }
+        !ty.is_function() && ty != Ty::ClassBody
+    });
+    out
+}
+
+/// The names of the functions `expression` can evaluate to the call of (`cond ? A({}) : B({})`).
+fn called_components(tree: &Tree<'_>, expression: NodeIx, names: &mut HashSet<String>) {
+    let mut pending = vec![expression];
+    while let Some(next) = pending.pop() {
+        let node = bare(tree, next);
+        match tree.ty(node) {
+            Ty::ConditionalExpression => {
+                // Children are the test, the consequent and the alternate.
+                pending.extend(tree.children(node).skip(1));
+            }
+            Ty::LogicalExpression => pending.extend(tree.children(node)),
+            Ty::SequenceExpression => pending.extend(tree.last_child(node)),
+            Ty::CallExpression => {
+                if let Some(callee) = tree.children(node).next()
+                    && let Some(name) = identifier_name(tree, bare(tree, callee))
+                {
+                    names.insert(name.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The root name of a tag: `Foo` for `<Foo>` and for `<Foo.Bar.Baz>`.
+fn tag_root<'a>(tree: &Tree<'a>, name: NodeIx) -> Option<&'a str> {
+    let mut current = name;
+    while tree.ty(current) == Ty::JSXMemberExpression {
+        current = tree.children(current).next()?;
+    }
+    if tree.ty(current) == Ty::JSXIdentifier {
+        tree.name(current)
+    } else {
+        None
+    }
+}
+
+/// The names of the functions declared at the top level of the module (exported or not) that hold JSX.
+fn rendering_functions(program: &Program<'_>, tree: &Tree<'_>) -> Vec<String> {
+    fn from_variables(
+        tree: &Tree<'_>,
+        variables: &VariableDeclaration<'_>,
+        names: &mut Vec<String>,
+    ) {
+        for declarator in &variables.declarations {
+            if let BindingPattern::BindingIdentifier(id) = &declarator.id
+                && let Some(init) = &declarator.init
+                && matches!(
+                    init,
+                    Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_)
+                )
+                && tree.has_jsx(ix_of_expression(init))
+            {
+                names.push(id.name.as_str().to_string());
+            }
+        }
+    }
+    fn from_function(tree: &Tree<'_>, function: &Function<'_>, names: &mut Vec<String>) {
+        if function.r#type == FunctionType::FunctionDeclaration
+            && let Some(id) = &function.id
+            && tree.has_jsx(node_ix(function.node_id()))
+        {
+            names.push(id.name.as_str().to_string());
+        }
+    }
+    let mut names = Vec::new();
+    for statement in &program.body {
+        match statement {
+            Statement::FunctionDeclaration(function) => from_function(tree, function, &mut names),
+            Statement::VariableDeclaration(variables) => {
+                from_variables(tree, variables, &mut names)
+            }
+            Statement::ExportDeclaration(export) => match &export.declaration {
+                Declaration::FunctionDeclaration(function) => {
+                    from_function(tree, function, &mut names);
+                }
+                Declaration::VariableDeclaration(variables) => {
+                    from_variables(tree, variables, &mut names);
+                }
+                _ => {}
+            },
+            Statement::ExportDefaultDeclaration(export) => {
+                if let ExportDefaultDeclarationKind::FunctionDeclaration(function) =
+                    &export.declaration
+                {
+                    from_function(tree, function, &mut names);
+                }
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
+/// Which of the declared functions are components. A function that is called with `new` or reads
+/// `this` is a constructor or a method, and one that neither holds JSX nor is a tag of this module nor
+/// returns the call of a component cannot be told from a helper (`const Total = (n) => n * 2`):
+/// wrapping it would make `Total(2)` return a function. Those stay as written, so they behave in
+/// development as in a build. What the pass loses is the hot update of a component that hides all
+/// three (one that only returns `props.children` and is used as a tag by another module).
+fn keep_components(program: &Program<'_>, tree: &Tree<'_>, declared: &[Declared]) -> Vec<bool> {
+    let mut constructed: HashSet<&str> = HashSet::new();
+    let mut tags: HashSet<&str> = HashSet::new();
+    tree.walk(0, |node, _| {
+        match tree.ty(node) {
+            Ty::NewExpression => {
+                if let Some(callee) = tree.children(node).next()
+                    && let Some(name) = identifier_name(tree, bare(tree, callee))
+                {
+                    constructed.insert(name);
+                }
+            }
+            Ty::JSXOpeningElement => {
+                if let Some(name) = tree.children(node).next()
+                    && let Some(root) = tag_root(tree, name)
+                {
+                    tags.insert(root);
+                }
+            }
+            _ => {}
+        }
+        true
+    });
+    // A function of the module that renders (holds JSX) is what a component returns the call of,
+    // whatever its name or parameters are.
+    let mut known: HashSet<String> = rendering_functions(program, tree).into_iter().collect();
+    let mut kept = vec![false; declared.len()];
+    let mut calls: Vec<(usize, HashSet<String>)> = Vec::new();
+    for (position, component) in declared.iter().enumerate() {
+        if constructed.contains(component.name.as_str()) || uses_this(tree, component.function) {
+            continue;
+        }
+        if tree.has_jsx(component.function) || tags.contains(component.name.as_str()) {
+            kept[position] = true;
+            known.insert(component.name.clone());
+            continue;
+        }
+        let mut names = HashSet::new();
+        for expression in returned(tree, component.function) {
+            called_components(tree, expression, &mut names);
+        }
+        calls.push((position, names));
+    }
+    // A returned call makes a component of its caller; a chain of them settles in at most one pass per link.
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (position, names) in &calls {
+            if kept[*position] {
+                continue;
+            }
+            if names.iter().any(|name| known.contains(name)) {
+                kept[*position] = true;
+                known.insert(declared[*position].name.clone());
+                changed = true;
+            }
+        }
+    }
+    kept
+}
+
 /// Variable holding this module's registry, declared by [`hmr_prelude`].
 pub fn hot_reg(registry: &mut Registry) -> String {
     registry.local("_$$reg")
@@ -225,6 +468,13 @@ pub fn apply_hmr(
                 if export.export_kind() == ImportOrExportKind::Type {
                     continue;
                 }
+                // An overload signature (`export function f(): void;`) is a type: the implementation is
+                // the export.
+                if matches!(&export.declaration, Declaration::FunctionDeclaration(function)
+                    if function.r#type == FunctionType::TSDeclareFunction)
+                {
+                    continue;
+                }
                 let before = components.len();
                 let end = export.span.end as usize;
                 // The reference collects the declaration with the end of the declaration itself.
@@ -236,6 +486,9 @@ pub fn apply_hmr(
                     &mut components,
                     &mut others,
                 );
+                for component in components.iter_mut().skip(before) {
+                    component.exported = true;
+                }
                 let added: Vec<&str> = components
                     .iter()
                     .skip(before)
@@ -287,6 +540,9 @@ pub fn apply_hmr(
             }
             Statement::ExportDefaultDeclaration(export) => match &export.declaration {
                 ExportDefaultDeclarationKind::FunctionDeclaration(function) => {
+                    if function.r#type == FunctionType::TSDeclareFunction {
+                        continue;
+                    }
                     let before = components.len();
                     collect_function(
                         function,
@@ -294,6 +550,9 @@ pub fn apply_hmr(
                         &mut others,
                         function.span.end as usize,
                     );
+                    for component in components.iter_mut().skip(before) {
+                        component.exported = true;
+                    }
                     if components.len() == before {
                         unknown_export = true;
                     }
@@ -319,6 +578,17 @@ pub fn apply_hmr(
         }
     }
 
+    let kept = keep_components(program, tree, &components);
+    let mut wrapped: Vec<Declared> = Vec::new();
+    for (component, keep) in components.into_iter().zip(kept) {
+        if keep {
+            wrapped.push(component);
+        } else if component.exported {
+            // An exported function that stays as written is an export that is not a component.
+            exported_values.push(component.name);
+        }
+    }
+    let components = wrapped;
     if components.is_empty() {
         return Ok(HmrResult {
             self_accepting: false,

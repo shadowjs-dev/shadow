@@ -102,7 +102,7 @@ function applyKey(
     setSelectValue(el, value);
     return;
   }
-  if (!svg && LIVE_PROPERTIES.test(key) && key in el) {
+  if (!svg && LIVE_PROPERTIES.test(key) && key in el && !isMeasure(el, key)) {
     // State the user changes (a typed value, a toggled box) lives in the property; the attribute is
     // only the default, and writing it stops the element following the data once it is dirty.
     liveDiffers(el, key, value, svg) &&
@@ -138,11 +138,25 @@ const LIVE_PROPERTIES =
 const STRING_PROPERTIES = /^(?:value|defaultValue)$/;
 
 /**
+ * True for the `value` of a `progress`, `meter` or `li`: a number property that turns `undefined` into `0` and
+ * writes `value="0"`, where the server leaves the attribute out (an indeterminate bar, an unnumbered item). It is written as
+ * an attribute, which `setAttribute` removes for `null` and `undefined`, like the compiler does.
+ */
+function isMeasure(el: Element, key: string): boolean {
+  // The tag, not `instanceof`: a class of this window is not the class of an iframe's element, and a minimal DOM may
+  // not define `HTMLMeterElement` at all.
+  return (
+    key === "value" &&
+    (el.localName === "progress" || el.localName === "meter" || el.localName === "li")
+  );
+}
+
+/**
  * True when a live property (typed value, toggled box) no longer matches the value last applied, so
  * an unchanged prop is written again and the element follows the data.
  */
 function liveDiffers(el: Element, key: string, value: unknown, svg: boolean): boolean {
-  if (svg || !LIVE_PROPERTIES.test(key) || !(key in el)) return false;
+  if (svg || !LIVE_PROPERTIES.test(key) || !(key in el) || isMeasure(el, key)) return false;
   // A select is written again whenever its props run: setting the value it already shows changes nothing.
   if (key === "value" && el instanceof HTMLSelectElement) return true;
   const live = Reflect.get(el, key);

@@ -82,14 +82,14 @@ const PROPERTIES: &[&str] = &[
 
 /// The HTML elements that have a DOM property of [`PROPERTIES`]. A name that is not here is on every
 /// HTML element (`hidden`, `inert`, `autofocus`, `innerHTML`, ...). On any other element the name is an
-/// attribute: assigning the property would only set an expando the markup never shows, and `value` on
-/// `li` is a number property that would turn `undefined` into `0`.
+/// attribute: assigning the property would only set an expando the markup never shows, and `value` on `li`,
+/// `progress` and `meter` is a number property that would turn `undefined` into `0` (and write `value="0"`,
+/// a determinate bar, where the server writes no attribute at all).
 const PROPERTY_TAGS: &[(&str, &[&str])] = &[
     (
         "value",
         &[
-            "button", "data", "input", "meter", "option", "output", "param", "progress", "select",
-            "textarea",
+            "button", "data", "input", "option", "output", "param", "select", "textarea",
         ],
     ),
     ("defaultValue", &["input", "output", "select", "textarea"]),
@@ -128,6 +128,7 @@ const POST_PROPERTIES: &[&str] = &[
 ];
 
 const XLINK: &str = "http://www.w3.org/1999/xlink";
+const XML: &str = "http://www.w3.org/XML/1998/namespace";
 
 /// Variable naming and statement buffers for one generated block.
 struct Block {
@@ -371,13 +372,16 @@ impl<'t, 'a> Ctx<'t, 'a> {
         // `text` is the user's expression and is read inside this method: its local must not be a
         // name the module uses.
         let local = self.reg.local("_ref$");
+        // The parameter is a name of the module's own scope too (a `let r$` the expression assigns):
+        // it is `r$` unless the module uses it.
+        let element = self.reg.local("r$");
         if assignable {
             format!(
-                "ref(r$) {{\nconst {local} = {text};\ntypeof {local} === \"function\" ? {local}(r$) : {text} = r$;\n}}"
+                "ref({element}) {{\nconst {local} = {text};\ntypeof {local} === \"function\" ? {local}({element}) : {text} = {element};\n}}"
             )
         } else {
             format!(
-                "ref(r$) {{\nconst {local} = {text};\ntypeof {local} === \"function\" && {local}(r$);\n}}"
+                "ref({element}) {{\nconst {local} = {text};\ntypeof {local} === \"function\" && {local}({element});\n}}"
             )
         }
     }
@@ -860,13 +864,13 @@ impl<'t, 'a> Ctx<'t, 'a> {
                     );
                     block.ops.push(statement);
                 }
-                "xlink" => {
+                "xlink" | "xml" => {
                     let call = self.reg.helper("setAttributeNS");
                     let statement = self.run(
                         dynamic,
                         format!(
                             "{call}({var}, {}, {}, {text});",
-                            json_string(XLINK),
+                            json_string(if namespace == "xml" { XML } else { XLINK }),
                             json_string(&name)
                         ),
                     );

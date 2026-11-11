@@ -190,6 +190,10 @@ function plan(source: unknown, options: CompileOptions | undefined): RawOptions 
   if (filename !== undefined && filename !== null && typeof filename !== "string") return null;
   if (moduleName !== undefined && moduleName !== null && typeof moduleName !== "string")
     return null;
+  // The addon reads every string as UTF-8 and would write U+FFFD for an unpaired surrogate in a name, in the import path or in the
+  // source map; the source gets the same treatment above.
+  if (typeof filename === "string" && !isWellFormed(filename)) return null;
+  if (typeof moduleName === "string" && !isWellFormed(moduleName)) return null;
   const raw: RawOptions = {
     generate: options.generate === "ssr" ? "ssr" : "dom",
     dev: options.dev === true,

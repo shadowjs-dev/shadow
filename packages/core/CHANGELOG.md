@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.5
+
+### Fixed
+
+- An effect, memo or root body that disposes its own owner and keeps running no longer leaks what it creates afterward: those cleanups run and those child effects stop with the run.
+- `reconcile` removes an own `__proto__` key that parsed JSON put into a store instead of throwing partway through the diff.
+- A store path step with a range or an index list of hundreds of thousands of items no longer overflows the call stack.
+
 ## 1.0.4
 
 ### Fixed

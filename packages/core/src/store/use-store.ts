@@ -48,6 +48,11 @@ function rangeKeys(range: { from?: number; to?: number; by?: number }, length: n
   return keys;
 }
 
+/** Appends `items` to `keys` one by one: a spread into `push` overflows the call stack for a long list. */
+function appendKeys(keys: Array<string | number>, items: ReadonlyArray<string | number>): void {
+  for (const item of items) keys.push(item);
+}
+
 /** The keys one path step addresses on `target` (a draft). */
 function stepKeys(target: object, step: unknown, label: string): Array<string | number> {
   const keys: Array<string | number> = [];
@@ -56,9 +61,9 @@ function stepKeys(target: object, step: unknown, label: string): Array<string | 
     else if (typeof step === "function") {
       const filter = step as (item: unknown, index: number) => boolean;
       for (let i = 0; i < target.length; i += 1) if (filter(target[i], i)) keys.push(i);
-    } else if (Array.isArray(step)) keys.push(...(step as number[]));
+    } else if (Array.isArray(step)) appendKeys(keys, step as number[]);
     else if (typeof step === "object" && step !== null)
-      keys.push(...rangeKeys(step, target.length));
+      appendKeys(keys, rangeKeys(step, target.length));
     else
       throw new TypeError(
         __DEV__ ? `ShadowStore${label}: bad path step for an array` : "SHADOW_STORE_PATH_ARRAY",
@@ -66,7 +71,7 @@ function stepKeys(target: object, step: unknown, label: string): Array<string | 
   } else if (typeof step === "string" || typeof step === "number") {
     keys.push(step);
   } else if (Array.isArray(step)) {
-    keys.push(...(step as Array<string | number>));
+    appendKeys(keys, step as Array<string | number>);
   } else {
     throw new TypeError(
       __DEV__ ? `ShadowStore${label}: bad path step for an object` : "SHADOW_STORE_PATH_OBJECT",

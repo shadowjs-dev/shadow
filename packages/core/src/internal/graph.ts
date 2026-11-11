@@ -627,6 +627,12 @@ export function recompute(node: Computation): void {
   }
   // The teardown's errors are thrown once the run is settled (unless a flush or an outer disposal collects them).
   rt.disposing += 1;
+  // The body disposed its own owner and kept going: what it created after that (child computations, cleanups) is
+  // attached to a node nobody disposes again, so it would live and subscribe for good. It goes with the run.
+  if ((node.flags & FLAG_DISPOSED) !== 0) {
+    disposeChildren(node);
+    node.runCleanups();
+  }
   finishDisposal();
 }
 
