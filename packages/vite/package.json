@@ -57,21 +57,21 @@
     }
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.15",
+    "@biomejs/biome": "2.6.6",
     "@mdx-js/mdx": "3.1.1",
     "@shadow-js/core": "*",
     "@shadow-js/web": "*",
     "@types/node": "^24.0.0",
-    "esbuild": "0.27.0",
+    "esbuild": "0.28.2",
     "fast-check": "^4.10.2",
     "happy-dom": "21.0.4",
     "remark-frontmatter": "5.0.0",
     "remark-gfm": "4.0.1",
     "remark-mdx-frontmatter": "6.0.0",
-    "tsdown": "0.23.0",
+    "tsdown": "0.23.7",
     "typescript": "7.0.2",
-    "vite": "8.3.3",
-    "vitest": "5.0.3"
+    "vite": "8.3.7",
+    "vitest": "5.1.0"
   },
   "homepage": "https://shadowjs.net/guides/vite/",
   "keywords": [

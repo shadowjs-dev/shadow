@@ -112,16 +112,16 @@
     "@shadow-js/core": "^1.0.5"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.15",
+    "@biomejs/biome": "2.6.6",
     "@shadow-js/compiler": "*",
     "@shadow-js/core": "*",
     "@types/node": "^24.0.0",
-    "esbuild": "0.27.0",
+    "esbuild": "0.28.2",
     "fast-check": "^4.10.2",
     "happy-dom": "21.0.4",
-    "tsdown": "0.23.0",
+    "tsdown": "0.23.7",
     "typescript": "7.0.2",
-    "vitest": "5.0.3"
+    "vitest": "5.1.0"
   },
   "homepage": "https://shadowjs.net/reference/web/",
   "keywords": [
