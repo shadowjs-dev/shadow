@@ -178,6 +178,15 @@ export function watchCommits(parent: Node, run: () => void): void {
   });
 }
 
+/**
+ * Like {@link watchCommits}, for a watch that lives as long as `parent` does: it is not tied to the owner that is
+ * current, so a binding that runs again does not end it. The select's value (see `setSelectValue`) uses it.
+ * @internal
+ */
+export function keepWatchingCommits(parent: Node, run: () => void): void {
+  commitWatchers.set(parent, (commitWatchers.get(parent) ?? new Set<() => void>()).add(run));
+}
+
 /** Applies a flattened value to a region. */
 function commit(region: Region, parts: readonly Part[]): void {
   if (__DEV__ && region.claimed !== undefined) {
@@ -198,6 +207,12 @@ function commit(region: Region, parts: readonly Part[]): void {
   commitWatchers.get(parent)?.forEach((run) => {
     run();
   });
+  // The options of an optgroup are the select's options.
+  if (parent.nodeName === "OPTGROUP" && parent.parentNode !== null) {
+    commitWatchers.get(parent.parentNode)?.forEach((run) => {
+      run();
+    });
+  }
 }
 
 /**

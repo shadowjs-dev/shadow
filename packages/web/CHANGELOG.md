@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.6
+
+### Fixed
+
+- A `<select value={...}>` takes its value again when the options inside it change. Options that a `<For>`, a `<Show>` or an `<optgroup>` adds or replaces after the value was set no longer leave the browser's first option selected; this holds for a value that changes before the options exist and for the array of a `multiple` select.
+
 ## 1.0.5
 
 ### Fixed
