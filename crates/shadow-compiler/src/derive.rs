@@ -527,12 +527,10 @@ fn pattern_entries<'a>(tree: &Tree<'a>, pattern: NodeIx) -> Result<Option<Vec<Pa
         }
         let key = match &property.key {
             PropertyKey::StaticIdentifier(it) => it.name.as_str().to_string(),
-            PropertyKey::StringLiteral(it) => {
-                if it.lone_surrogates {
-                    return unsupported("a string with a lone surrogate cannot be reproduced");
-                }
-                it.value.as_str().to_string()
-            }
+            PropertyKey::StringLiteral(it) => match it.value.as_str() {
+                Some(text) => text.to_string(),
+                None => return unsupported("a string with a lone surrogate cannot be reproduced"),
+            },
             PropertyKey::NumericLiteral(it) => number_to_string(it.value),
             PropertyKey::BigIntLiteral(_) => {
                 return unsupported("a BigInt property key in a props pattern");

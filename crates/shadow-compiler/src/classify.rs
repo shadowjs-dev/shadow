@@ -195,15 +195,14 @@ fn template_literal_value(literal: &TemplateLiteral<'_>) -> ConstantResult {
         return ConstantResult::NotConstant;
     }
     match literal.quasis.first() {
-        Some(quasi) => {
-            if quasi.lone_surrogates {
-                return ConstantResult::Unrepresentable;
-            }
-            match &quasi.value.cooked {
-                Some(cooked) => ConstantResult::Value(Constant::Str(cooked.as_str().to_string())),
-                None => ConstantResult::NotConstant,
-            }
-        }
+        Some(quasi) => match &quasi.value.cooked {
+            Some(cooked) => match cooked.as_str() {
+                Some(text) => ConstantResult::Value(Constant::Str(text.to_string())),
+                // a lone surrogate has no UTF-8 form
+                None => ConstantResult::Unrepresentable,
+            },
+            None => ConstantResult::NotConstant,
+        },
         None => ConstantResult::NotConstant,
     }
 }
@@ -213,13 +212,11 @@ fn literal_value(tree: &Tree<'_>, node: NodeIx) -> ConstantResult {
         AstKind::BooleanLiteral(it) => ConstantResult::Value(Constant::Bool(it.value)),
         AstKind::NullLiteral(_) => ConstantResult::Value(Constant::Null),
         AstKind::NumericLiteral(it) => ConstantResult::Value(Constant::Num(it.value)),
-        AstKind::StringLiteral(it) => {
-            if it.lone_surrogates {
-                ConstantResult::Unrepresentable
-            } else {
-                ConstantResult::Value(Constant::Str(it.value.as_str().to_string()))
-            }
-        }
+        AstKind::StringLiteral(it) => match it.value.as_str() {
+            Some(text) => ConstantResult::Value(Constant::Str(text.to_string())),
+            // a lone surrogate has no UTF-8 form
+            None => ConstantResult::Unrepresentable,
+        },
         AstKind::TemplateLiteral(it) => template_literal_value(it),
         _ => ConstantResult::NotConstant,
     }

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.1
+
+### Changed
+
+- The native compiler is built on oxc 0.158 (`oxc_*` crates 0.153 to 0.158) and the JavaScript fallback uses `oxc-parser` 0.158. A string or template literal that contains a lone UTF-16 surrogate is still reported as unrepresentable; every other string compiles as before.
+
 ## 1.1.0
 
 ### Changed

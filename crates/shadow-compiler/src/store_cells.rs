@@ -111,7 +111,10 @@ fn imported_names<'a>(
         if declaration.import_kind == ImportOrExportKind::Type {
             continue;
         }
-        let source = declaration.source.value.as_str();
+        // an import source with a lone surrogate is none of ours
+        let Some(source) = declaration.source.value.as_str() else {
+            continue;
+        };
         if source != CORE && source != "@shadow-js/core/store" {
             continue;
         }
@@ -130,7 +133,9 @@ fn imported_names<'a>(
                     let imported = match &it.imported {
                         ModuleExportName::IdentifierName(name) => name.name.as_str(),
                         ModuleExportName::IdentifierReference(name) => name.name.as_str(),
-                        ModuleExportName::StringLiteral(literal) => literal.value.as_str(),
+                        ModuleExportName::StringLiteral(literal) => {
+                            literal.value.as_str().unwrap_or_default()
+                        }
                     };
                     if imported == "useStore" {
                         named.insert(it.local.name.as_str());
@@ -174,7 +179,7 @@ fn name_only_options(argument: &Argument<'_>) -> bool {
         }
         match &property.key {
             PropertyKey::StaticIdentifier(key) => key.name.as_str() == "name",
-            PropertyKey::StringLiteral(key) => key.value.as_str() == "name",
+            PropertyKey::StringLiteral(key) => key.value.as_str() == Some("name"),
             _ => false,
         }
     })

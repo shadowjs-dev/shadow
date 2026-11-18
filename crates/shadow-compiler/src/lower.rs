@@ -470,7 +470,8 @@ impl<'t, 'a> Ctx<'t, 'a> {
                 };
                 let key_name = match &property.key {
                     PropertyKey::StaticIdentifier(it) => Some(it.name.as_str()),
-                    PropertyKey::StringLiteral(it) => Some(it.value.as_str()),
+                    // a name with a lone surrogate is no static name we know
+                    PropertyKey::StringLiteral(it) => it.value.as_str(),
                     PropertyKey::Identifier(it) => Some(it.name.as_str()),
                     _ => None,
                 };
@@ -629,7 +630,11 @@ impl<'t, 'a> Ctx<'t, 'a> {
                     None,
                 )),
                 Some(JSXAttributeValue::StringLiteral(literal)) => {
-                    let decoded = decode_html_strict(literal.value.as_str()).into_owned();
+                    // JSX attribute text is raw source, so it never holds a lone surrogate; the lossy
+                    // conversion only keeps the compiler total
+                    let decoded =
+                        decode_html_strict(&String::from_utf8_lossy(literal.value.as_bytes()))
+                            .into_owned();
                     out.push(Self::static_attribute(
                         tag,
                         &name,
