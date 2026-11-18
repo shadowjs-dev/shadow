@@ -112,7 +112,7 @@
     "@shadow-js/core": "^1.1.1"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.6",
+    "@biomejs/biome": "2.6.8",
     "@shadow-js/compiler": "*",
     "@shadow-js/core": "*",
     "@types/node": "^24.0.0",

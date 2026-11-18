@@ -82,7 +82,7 @@
     "url": "https://github.com/shadowjs-dev/shadow/issues"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.6",
+    "@biomejs/biome": "2.6.8",
     "@shadow-js/core": "*",
     "@shadow-js/web": "*",
     "@types/node": "^24.0.0",

@@ -22,7 +22,7 @@
     "check": "npm run lint && npm run build && npm run typecheck && npm run build:binaries && npm test && npm run test:perf && npm run test:gc"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.6",
+    "@biomejs/biome": "2.6.8",
     "@types/node": "^24.0.0",
     "esbuild": "0.28.2",
     "fast-check": "^4.10.2",
