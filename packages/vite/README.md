@@ -1,3 +1,5 @@
+<p align="center"><img src="https://raw.githubusercontent.com/shadowjs-dev/shadow/main/.github/banner.png" alt="ShadowJS" width="100%"></p>
+
 # @shadow-js/vite
 
 The Vite plugin for ShadowJS. It runs [`@shadow-js/compiler`](../compiler/README.md) on every

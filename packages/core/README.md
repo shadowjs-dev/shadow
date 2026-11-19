@@ -1,3 +1,5 @@
+<p align="center"><img src="https://raw.githubusercontent.com/shadowjs-dev/shadow/main/.github/banner.png" alt="ShadowJS" width="100%"></p>
+
 # @shadow-js/core
 
 The reactive engine of ShadowJS: signals, a deep fine-grained store, memos, effects, owners,

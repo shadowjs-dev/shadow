@@ -1,3 +1,5 @@
+<p align="center"><img src="https://raw.githubusercontent.com/shadowjs-dev/shadow/main/.github/banner.png" alt="ShadowJS" width="100%"></p>
+
 # @shadow-js/compiler
 
 The ShadowJS JSX compiler. It parses a module with an AST parser, lowers each JSX tree to an intermediate form, and rewrites the JSX in

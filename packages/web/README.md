@@ -1,3 +1,5 @@
+<p align="center"><img src="https://raw.githubusercontent.com/shadowjs-dev/shadow/main/.github/banner.png" alt="ShadowJS" width="100%"></p>
+
 # @shadow-js/web
 
 The DOM renderer of ShadowJS: it mounts components, keeps text, attributes and child lists in sync
