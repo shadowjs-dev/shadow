@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.2
+
+### Changed
+
+- The README starts with the ShadowJS banner, so the package page on npm shows it (the other packages already had it).
+
 ## 1.1.1
 
 ### Changed
