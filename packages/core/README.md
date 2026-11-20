@@ -134,6 +134,7 @@ Entry `@shadow-js/core`. The exports are listed below by purpose.
 | `createRef`, `useImperativeHandle` | A ref object that also works as a ref callback, and publishing an imperative handle to a ref. |
 | `cache` | Memoizes a function per request: within one root the same arguments return the same result. |
 | `useResource` | Load asynchronous data reactively. The handle has `state`, `loading`, `error`, `latest`, `refetch` and `mutate`; reading it while loading holds the nearest `<Suspense>`. |
+| `isPending` | `isPending(() => expression)` is true while a resource the expression reads, directly or through memos, loads or reloads: mark what is on screen as stale without replacing it by a fallback. |
 | `ResourceCacheContext`, `SuspenseContext` | The bridges that renderers and `<Suspense>` provide. |
 
 Error handlers registered with `onError` or `catchError` run untracked. Signals read while handling
@@ -163,10 +164,28 @@ The package also exports the types `Accessor`, `Setter`, `Cleanup`, `Equals`, `E
 | Entry | Contents |
 | --- | --- |
 | `@shadow-js/core/store` | The store module on its own: `useStore`, `produce`, `reconcile`, `snapshot`, `unwrap` and the store types. |
-| `@shadow-js/core/extend` | The extension API the built-ins are made from: signal nodes (`createSignalNode`, `readSignal`, `writeSignal`), computations (`createComputation`), owners (`createOwner`, `addCleanup`, `disposeOwner`, `runInScope`), scheduling (`flush`, `schedule`, `group`) and diagnostics (`warn`, `ShadowError`, `setWarningListener`). |
+| `@shadow-js/core/extend` | The extension API the built-ins are made from: signal nodes (`createSignalNode`, `readSignal`, `writeSignal`), computations (`createComputation`), owners (`createOwner`, `addCleanup`, `disposeOwner`, `runInScope`), scheduling (`flush`, `schedule`, `group`) and diagnostics (`warn`, `ShadowError`, `setWarningListener`, `subscribeDiagnostics`, `reportDiagnostic`, `ownerPath`, `nameOwner`, `diagnosticUrl`), and `registerLoading` for a data primitive that `isPending` should see. |
 
 The `node`, `worker`, `deno` and `bun` conditions resolve to a server build in which effects never
 run; the `development` condition selects the build with diagnostics.
+
+## Diagnostics
+
+A development message says what went wrong, where, and where to read about it:
+
+```text
+[shadow EACH_KEY_DUPLICATE] Duplicate key in a keyed list; later duplicates get fresh rows each update.
+    in <App> > <TodoList> > memo
+    https://shadowjs.net/faq/diagnostics/#each_key_duplicate
+    offline: node_modules/@shadow-js/core/skills/diagnostics/SKILL.md
+```
+
+The second line is the owner path: the components above the code that made the mistake, then the
+effect or memo it ran in. A code is reported once per place. The package ships the runtime sections
+of the diagnostics page in `skills/diagnostics/` (`SKILL.md`, and `diagnostics.json` with one entry
+per code: whether it warns or throws, what it means, the fix), so a coding agent or a reader with no
+network finds the fix next to the code that raised it. `subscribeDiagnostics` from
+`@shadow-js/core/extend` delivers the same reports as data. Production builds carry none of this.
 
 ## Links
 

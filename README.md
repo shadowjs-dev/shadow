@@ -50,6 +50,11 @@ render(() => <Counter />, document.getElementById("app")!);
   expected HTML, computed without the framework) after every random update. A list of 20,000 rows is reversed, shuffled and halved by moving
   the existing nodes. 1,000 mount/unmount cycles of a compiled app leave no DOM behind and grow the
   heap by less than 10 MiB.
+- **Mistakes say where they are.** A development warning or error names its code, the components above
+  the code that made the mistake (`in <App> > <TodoList> > memo`) and the page that explains the fix.
+  `@shadow-js/core` ships the runtime sections of that page inside the package (`skills/diagnostics`),
+  so a coding agent or a reader with no network finds the fix next to the code. Production builds keep
+  only the code.
 - **Escaping and URL checks built in.** The server renderer escapes dynamic text and attribute values,
   and the compiler escapes the static text it folds into templates. `javascript:` URLs, also when
   disguised with whitespace or control characters, are not written to URL attributes. The packages'

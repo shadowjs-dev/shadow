@@ -32,29 +32,44 @@ export function captureScriptBody(names: readonly string[]): string {
   return (
     "(function(){var d=document,n=" +
     list +
-    `,q=[];function c(e){if(q.length<${MAX_EARLY_EVENTS})q.push(e)}` +
+    // The target is recorded now: once the dispatch of an event from a shadow tree is over, the
+    // platform clears `event.target`, and the replay would have nowhere to send it.
+    `,q=[],t=[];function c(e){if(q.length<${MAX_EARLY_EVENTS}){q.push(e);t.push(e.composedPath()[0]||e.target)}}` +
     "for(var i=0;i<n.length;i++)d.addEventListener(n[i],c,true);" +
-    `window.${EARLY_CAPTURE_KEY}={queue:q,names:n,listener:c};})();`
+    `window.${EARLY_CAPTURE_KEY}={queue:q,targets:t,names:n,listener:c};})();`
   );
 }
 
+interface Captured {
+  readonly event: Event;
+  /** Where the event started, as seen when it was captured; null when nothing usable was recorded. */
+  readonly target: Node | null;
+}
+
 interface Capture {
-  readonly queue: Event[];
+  readonly queue: Captured[];
   readonly names: string[];
   readonly listener: (event: Event) => void;
 }
 
-/** The capture the script left on the window, validated, or undefined. */
 function readCapture(): Capture | undefined {
   const value: unknown = Reflect.get(globalThis, EARLY_CAPTURE_KEY);
   if (typeof value !== "object" || value === null) return undefined;
   const queue: unknown = Reflect.get(value, "queue");
+  const targets: unknown = Reflect.get(value, "targets");
   const names: unknown = Reflect.get(value, "names");
   const listener: unknown = Reflect.get(value, "listener");
   if (!Array.isArray(queue) || !Array.isArray(names) || typeof listener !== "function") {
     return undefined;
   }
-  const events = queue.filter((item): item is Event => item instanceof Event);
+  const events: Captured[] = [];
+  queue.forEach((event: unknown, index) => {
+    if (!(event instanceof Event)) return;
+    // The recorded target first: `event.target` is empty by now for an event from a shadow tree.
+    const recorded: unknown = Array.isArray(targets) ? targets[index] : undefined;
+    const target = recorded instanceof Node ? recorded : event.target;
+    events.push({ event, target: target instanceof Node ? target : null });
+  });
   const kinds = names.filter((name): name is string => typeof name === "string");
   return { queue: events, names: kinds, listener: listener as (event: Event) => void };
 }
@@ -88,9 +103,8 @@ export function replayEarlyEvents(): void {
   if (capture === undefined) return;
   Reflect.deleteProperty(globalThis, EARLY_CAPTURE_KEY);
   for (const name of capture.names) document.removeEventListener(name, capture.listener, true);
-  for (const event of capture.queue) {
-    const target = event.target;
-    if (target instanceof Node) target.dispatchEvent(withoutDefaultAction(reissue(event)));
+  for (const { event, target } of capture.queue) {
+    target?.dispatchEvent(withoutDefaultAction(reissue(event)));
   }
 }
 

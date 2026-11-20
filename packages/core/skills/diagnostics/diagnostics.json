@@ -1,0 +1,248 @@
+{
+  "page": "https://shadowjs.net/faq/diagnostics/",
+  "diagnostics": [
+    {
+      "code": "NO_OWNER_EFFECT",
+      "area": "Core",
+      "kind": "warning",
+      "summary": "useEffect, useRenderEffect or onMount ran with no current owner.",
+      "fix": "create the effect inside a component or createRoot; after an await, restore the owner with runWithOwner (see ownership).",
+      "url": "https://shadowjs.net/faq/diagnostics/#no_owner_effect",
+      "guide": "SKILL.md#no_owner_effect"
+    },
+    {
+      "code": "NO_OWNER_CLEANUP",
+      "area": "Core",
+      "kind": "warning",
+      "summary": "onCleanup(fn) ran with no current owner; fn is dropped and never runs.",
+      "fix": "register cleanups inside a component, effect or createRoot, or inside runWithOwner(owner, ...) after an await.",
+      "url": "https://shadowjs.net/faq/diagnostics/#no_owner_cleanup",
+      "guide": "SKILL.md#no_owner_cleanup"
+    },
+    {
+      "code": "NO_OWNER_ERROR",
+      "area": "Core",
+      "kind": "warning",
+      "summary": "onError(handler) ran with no current owner; the handler can never be reached.",
+      "fix": "call it inside the scope whose errors it should handle, or use catchError(fn, handler), which creates the scope for you.",
+      "url": "https://shadowjs.net/faq/diagnostics/#no_owner_error",
+      "guide": "SKILL.md#no_owner_error"
+    },
+    {
+      "code": "NO_OWNER_ID",
+      "area": "Core",
+      "kind": "error",
+      "summary": "useId() ran outside any owner.",
+      "fix": "call useId() in a component body or inside createRoot.",
+      "url": "https://shadowjs.net/faq/diagnostics/#no_owner_id",
+      "guide": "SKILL.md#no_owner_id"
+    },
+    {
+      "code": "WRITE_IN_MEMO",
+      "area": "Core",
+      "kind": "error",
+      "summary": "A signal or store was written while a useMemo (or a compiler-derived constant) was computing.",
+      "fix": "compute the value instead of storing it elsewhere; if a write is a real side effect, do it in useEffect.",
+      "url": "https://shadowjs.net/faq/diagnostics/#write_in_memo",
+      "guide": "SKILL.md#write_in_memo"
+    },
+    {
+      "code": "CYCLE_DETECTED",
+      "area": "Core",
+      "kind": "error",
+      "summary": "A memo read itself while it was running, directly or through another memo that had to recompute in the same pull.",
+      "fix": "a value that depends on its own previous value is not a derivation. Use the previous argument that useMemo passes to its function, or keep the accumulator in a signal.",
+      "url": "https://shadowjs.net/faq/diagnostics/#cycle_detected",
+      "guide": "SKILL.md#cycle_detected"
+    },
+    {
+      "code": "INFINITE_LOOP",
+      "area": "Core",
+      "kind": "error",
+      "summary": "Effects kept re-triggering each other for more than 1000 passes, so the flush was aborted and its queues cleared.",
+      "fix": "read the previous value untracked (the updater form set((n) => n + 1) does), derive with a memo, or write from an event handler. See scheduler.",
+      "url": "https://shadowjs.net/faq/diagnostics/#infinite_loop",
+      "guide": "SKILL.md#infinite_loop"
+    },
+    {
+      "code": "FLUSH_IN_EFFECT",
+      "area": "Core",
+      "kind": "warning",
+      "summary": "flushSync() was called while a flush was already draining (inside an effect or a cleanup).",
+      "fix": "remove the call. The flush that is running will process everything you write; if you need the DOM updated, read it in a later effect or after the flush.",
+      "url": "https://shadowjs.net/faq/diagnostics/#flush_in_effect",
+      "guide": "SKILL.md#flush_in_effect"
+    },
+    {
+      "code": "RUN_WITH_DISPOSED_OWNER",
+      "area": "Core",
+      "kind": "warning",
+      "summary": "runWithOwner(owner, fn) received an owner that was already disposed.",
+      "fix": "check owner.disposed before scheduling more work, or cancel the work in onCleanup.",
+      "url": "https://shadowjs.net/faq/diagnostics/#run_with_disposed_owner",
+      "guide": "SKILL.md#run_with_disposed_owner"
+    },
+    {
+      "code": "DUPLICATE_CORE",
+      "area": "Core",
+      "kind": "",
+      "summary": "createRoot lists each copy of @shadow-js/core in a registry at globalThis[Symbol.for(\"shadow-js.core.instances\")], with the number of its live roots, and warns DUPLICATE_CORE (\"More than one copy of @shadow-js/core is loaded.",
+      "fix": "make every package resolve one copy: npm ls @shadow-js/core must show a single version, deduplicated; in Vite add resolve.dedupe: [\"@shadow-js/core\", \"@shadow-js/web\"]; library packages must list core and web as peerDependencies.",
+      "url": "https://shadowjs.net/faq/diagnostics/#duplicate_core",
+      "guide": "SKILL.md#duplicate_core"
+    },
+    {
+      "code": "CONTEXT_MISSING",
+      "area": "Core",
+      "kind": "error",
+      "summary": "useContext(context) found no provider above it and the context has no default value.",
+      "fix": "render the provider above the consumer, or give the context a default: createContext(defaultValue).",
+      "url": "https://shadowjs.net/faq/diagnostics/#context_missing",
+      "guide": "SKILL.md#context_missing"
+    },
+    {
+      "code": "EACH_KEY_DUPLICATE",
+      "area": "Core",
+      "kind": "warning",
+      "summary": "Two items of a keyed list (<For key={...}> or mapArray with key) have the same key.",
+      "fix": "use a key that is unique in the list, normally a database id.",
+      "url": "https://shadowjs.net/faq/diagnostics/#each_key_duplicate",
+      "guide": "SKILL.md#each_key_duplicate"
+    },
+    {
+      "code": "EFFECT_DEPS_IGNORED",
+      "area": "Core",
+      "kind": "warning",
+      "summary": "useEffect(fn, [deps]) was called with a React-style dependency array.",
+      "fix": "drop the array to track what the body reads, or use useEffect(deps, fn) to track only what deps reads.",
+      "url": "https://shadowjs.net/faq/diagnostics/#effect_deps_ignored",
+      "guide": "SKILL.md#effect_deps_ignored"
+    },
+    {
+      "code": "UNSAFE_URL_BLOCKED",
+      "area": "DOM runtime",
+      "kind": "warning",
+      "summary": "A URL attribute (href, src, action, formaction, xlink:href, poster, data) was given a value that, after removing control characters and whitespace and lower-casing, starts with javascript:, data:text/html or vbscript:.",
+      "fix": "never pass untrusted strings straight to a URL attribute; allow-list the scheme first.",
+      "url": "https://shadowjs.net/faq/diagnostics/#unsafe_url_blocked",
+      "guide": "SKILL.md#unsafe_url_blocked"
+    },
+    {
+      "code": "INVALID_ATTRIBUTE_NAME",
+      "area": "DOM runtime",
+      "kind": "error",
+      "summary": "An attribute name that cannot appear in markup reached setAttribute, setAttributeNS, setBoolAttribute or, on the server, ssrAttribute / ssrElement.",
+      "fix": "spread only keys you control, or filter them first.",
+      "url": "https://shadowjs.net/faq/diagnostics/#invalid_attribute_name",
+      "guide": "SKILL.md#invalid_attribute_name"
+    },
+    {
+      "code": "SRCDOC_DYNAMIC",
+      "area": "DOM runtime",
+      "kind": "warning",
+      "summary": "A value computed at run time was written to srcdoc.",
+      "fix": "sanitize the document before it reaches the attribute, and give the frame a sandbox attribute (without allow-scripts and allow-same-origin together) so a document that slips through cannot reach your page.",
+      "url": "https://shadowjs.net/faq/diagnostics/#srcdoc_dynamic",
+      "guide": "SKILL.md#srcdoc_dynamic"
+    },
+    {
+      "code": "DYNAMIC_SVG_CASE",
+      "area": "DOM runtime",
+      "kind": "warning",
+      "summary": "Dynamic was given an SVG element name in a case SVG does not spell it in (clippath, CLIPPATH, lineargradient, fegaussianblur, textpath, ...).",
+      "fix": "write the name as SVG spells it.",
+      "url": "https://shadowjs.net/faq/diagnostics/#dynamic_svg_case",
+      "guide": "SKILL.md#dynamic_svg_case"
+    },
+    {
+      "code": "DUPLICATE_CLASS_ATTRIBUTE",
+      "area": "DOM runtime",
+      "kind": "warning",
+      "summary": "One element carries both class and className (or class twice).",
+      "fix": "keep one, and join the class names into it.",
+      "url": "https://shadowjs.net/faq/diagnostics/#duplicate_class_attribute",
+      "guide": "SKILL.md#duplicate_class_attribute"
+    },
+    {
+      "code": "HYDRATION_KEY_MISS",
+      "area": "DOM runtime",
+      "kind": "warning",
+      "summary": "During hydrate() the client asked for the server element with a given key and the server HTML has none.",
+      "fix": "render the same components in the same order on both sides; defer client-only content to onMount.",
+      "url": "https://shadowjs.net/faq/diagnostics/#hydration_key_miss",
+      "guide": "SKILL.md#hydration_key_miss"
+    },
+    {
+      "code": "HEAD_OUTSIDE_OWNER",
+      "area": "DOM runtime",
+      "kind": "warning",
+      "summary": "useHead() ran with no current owner, so nothing was registered (a head tag must be removed when its owner is disposed).",
+      "fix": "call useHead inside a component or createRoot.",
+      "url": "https://shadowjs.net/faq/diagnostics/#head_outside_owner",
+      "guide": "SKILL.md#head_outside_owner"
+    },
+    {
+      "code": "PORTAL_TARGET_MISSING",
+      "area": "DOM runtime",
+      "kind": "warning",
+      "summary": "Portal has no mount element: mount was null, undefined from a function, or document.getElementById(...) found nothing.",
+      "fix": "make sure the element exists when the portal is created, pass a function that returns it later, or omit mount to render into document.body.",
+      "url": "https://shadowjs.net/faq/diagnostics/#portal_target_missing",
+      "guide": "SKILL.md#portal_target_missing"
+    },
+    {
+      "code": "SSR_BOUNDARY_WATERFALL",
+      "area": "Server rendering",
+      "kind": "error",
+      "summary": "renderToStringAsync needed more than maxPasses passes (default 10): each pass resolved resources that, once resolved, made the app create new resources, a request waterfall.",
+      "fix": "start independent requests together (create the resources in the same component pass), flatten the data flow, or raise maxPasses when the depth is intended.",
+      "url": "https://shadowjs.net/faq/diagnostics/#ssr_boundary_waterfall",
+      "guide": "SKILL.md#ssr_boundary_waterfall"
+    },
+    {
+      "code": "SSR_TIMEOUT",
+      "area": "Server rendering",
+      "kind": "error",
+      "summary": "The render (renderToStringAsync, default 10 000 ms) or the stream (renderToStream, default 30 000 ms) did not finish within timeoutMs; the render is canceled and its roots are disposed.",
+      "fix": "find the resource that never settles (a request without its own timeout), or raise timeoutMs.",
+      "url": "https://shadowjs.net/faq/diagnostics/#ssr_timeout",
+      "guide": "SKILL.md#ssr_timeout"
+    },
+    {
+      "code": "UNRECOGNIZED_INSERT_VALUE",
+      "area": "Server rendering",
+      "kind": "error",
+      "summary": "A value that cannot become markup reached the renderer (a plain object throws in development and renders nothing in production; a Symbol throws in both): a plain object, a Symbol (also as an attribute value, class name, style value or innerHTML), or a style that is not a string, object or array.",
+      "fix": "render a field ({user.name}), not the object; stringify explicitly with JSON.stringify if you really want text.",
+      "url": "https://shadowjs.net/faq/diagnostics/#unrecognized_insert_value",
+      "guide": "SKILL.md#unrecognized_insert_value"
+    },
+    {
+      "code": "INVALID_TAG_NAME",
+      "area": "Server rendering",
+      "kind": "error",
+      "summary": "ssrElement(tag, ...) (used for elements with spread props) received a tag name that is not letters, digits and dashes starting with a letter.",
+      "fix": "never build tag names from user input; map to an allow-list.",
+      "url": "https://shadowjs.net/faq/diagnostics/#invalid_tag_name",
+      "guide": "SKILL.md#invalid_tag_name"
+    },
+    {
+      "code": "INVALID_STYLE_PROPERTY",
+      "area": "Server rendering",
+      "kind": "error",
+      "summary": "An object passed as style (or inside a style array) has a key that is not a valid CSS property name, so it could break out of the style attribute.",
+      "fix": "use real property names; do not take property names from user input.",
+      "url": "https://shadowjs.net/faq/diagnostics/#invalid_style_property",
+      "guide": "SKILL.md#invalid_style_property"
+    },
+    {
+      "code": "UNSERIALIZABLE_VALUE",
+      "area": "Server rendering",
+      "kind": "error",
+      "summary": "serialize(data) found a value it cannot represent: a function, a symbol, a class instance or another non-plain object.",
+      "fix": "convert to plain data before it goes into resource results.",
+      "url": "https://shadowjs.net/faq/diagnostics/#unserializable_value",
+      "guide": "SKILL.md#unserializable_value"
+    }
+  ]
+}

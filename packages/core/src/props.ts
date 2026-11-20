@@ -23,16 +23,20 @@ const MAX_FUNCTION_LAYERS = 1000;
 
 /**
  * A value accepted by {@link mergeProps}: an object, a function that returns one (called at every
- * read, so it can be reactive), or `null`, `undefined` or `false`, which are skipped. Use it to type
- * a helper that collects sources before merging them.
+ * read, so it can be reactive), or a value that stands for nothing and is skipped: `null`,
+ * `undefined`, `false`, `0`, `0n` or `""`, which is what `condition && props` leaves when the
+ * condition is not met. Use it to type a helper that collects sources before merging them.
  * @since 1.0.0
  */
-export type MergeSource = object | null | undefined | false;
+export type MergeSource = object | Nothing;
+
+/** What a skipped source is: the values `condition && props` leaves when the condition is not met. */
+type Nothing = null | undefined | false | 0 | 0n | "";
 
 /** The props object a source stands for; functions contribute their return type. */
 type PropsOf<S> = S extends (...args: never[]) => infer R
-  ? Exclude<R, null | undefined | false>
-  : S extends null | undefined | false
+  ? Exclude<R, Nothing>
+  : S extends Nothing
     ? object
     : S;
 
@@ -98,9 +102,13 @@ export interface ResolvedChildren {
   only(): unknown;
 }
 
-/** Whether a source stands for nothing and is skipped. */
-function isEmptySource(value: unknown): value is null | undefined | false {
-  return value === null || value === undefined || value === false;
+/**
+ * Whether a source stands for nothing and is skipped: every value `condition && props` leaves when the
+ * condition is not met (`null`, `undefined`, `false`, `0`, `NaN`, `0n`, `""`), as an object spread
+ * skips them. Truthiness is the test on purpose: it is the test `&&` applied.
+ */
+function isEmptySource(value: unknown): value is Nothing {
+  return !value;
 }
 
 /** Own enumerable string and symbol keys, minus the unsafe ones. Reads no getter. */
@@ -122,7 +130,7 @@ function resolveSource(source: object): object | undefined {
   if (typeof value === "object" && value !== null) return value;
   throw new TypeError(
     __DEV__
-      ? "mergeProps: a source function must return an object, null, undefined or false"
+      ? "mergeProps: a source function must return an object or a value that stands for nothing (null, undefined, false, 0, an empty string)"
       : "SHADOW_MERGE_SOURCE",
   );
 }
@@ -252,16 +260,18 @@ function liveView(load: () => LiveState): object {
  * to the left is tried. Nothing is copied at merge time, so reads stay reactive. Use it to give
  * component props defaults without reading them in the component body.
  *
- * Sources may be objects, `null`, `undefined` or `false` (skipped), or functions that return an
- * object. A function is called on every read, which is how spreads such as `{...props()}` stay
- * reactive. Keys named `__proto__`, `constructor` or `prototype` are ignored.
+ * Sources may be objects, functions that return an object, or a value that stands for nothing and is
+ * skipped: `null`, `undefined`, `false`, `0`, `0n` or `""`, so `count() && extra` is a valid source
+ * whatever `count()` holds. A function is called on every read, which is how spreads such as
+ * `{...props()}` stay reactive. Keys named `__proto__`, `constructor` or `prototype` are ignored.
  *
  * @param sources The props objects, from lowest to highest priority.
  * @returns A read-only object whose keys are the union of the sources' own enumerable keys. With a
  * function source, the key set is recomputed on every access.
  * @throws TypeError (production message `SHADOW_MERGE_SOURCES`) when a source is not an object, a
- * function, `null`, `undefined` or `false`. A read of the result throws TypeError (production
- * message `SHADOW_MERGE_SOURCE`) when a function source returns anything else.
+ * function or one of the skipped values. A read of the result throws TypeError (production message
+ * `SHADOW_MERGE_SOURCE`) when a function source returns anything else (a non-empty string, a number
+ * other than 0, `true`).
  * @example
  * import { mergeProps } from "@shadow-js/core";
  *
@@ -283,7 +293,7 @@ export function mergeProps(...sources: readonly MergeSource[]): object {
     } else if (typeof source !== "object") {
       throw new TypeError(
         __DEV__
-          ? "mergeProps: sources must be objects, functions, or null, undefined or false"
+          ? "mergeProps: sources must be objects, functions, or a value that stands for nothing (null, undefined, false, 0, an empty string)"
           : "SHADOW_MERGE_SOURCES",
       );
     }

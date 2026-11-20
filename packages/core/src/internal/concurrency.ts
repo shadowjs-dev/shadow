@@ -39,8 +39,14 @@ import { isSuspension, SUSPENSION } from "./suspension";
  * closure variables of `createHooks`.
  */
 
-/** Transition-lane effects run per macrotask; between two chunks urgent work and input can run. */
-const LANE_CHUNK = 64;
+/**
+ * How long one turn of the transition lane runs, in milliseconds, before it gives the thread back so
+ * that urgent work, input and a paint can happen. Time, not a count of effects: a count that suits
+ * cheap effects makes one long task of expensive ones, and a count that suits expensive effects makes
+ * thousands of cheap ones wait through timer turns they do not need. A turn always runs at least one
+ * effect, so a single effect that costs more than this still makes progress.
+ */
+const LANE_SLICE_MS = 5;
 
 /** The length of the suspended list from which the disposed nodes are dropped, at each power of two. */
 const SUSPENDED_SWEEP_AT = 64;
@@ -82,14 +88,25 @@ function createHooks(): Hooks {
   const laneBusy = (): boolean => hasLanePending() || holds > 0;
 
   /**
-   * Runs one chunk of a lane queue. An entry without FLAG_TRANSITION was promoted to the urgent queue
-   * after it was queued here; it is skipped (the urgent queue owns its FLAG_QUEUED).
+   * Runs the lane effects of one phase, parents before children, siblings by creation, until none is
+   * left or the turn's time is used (`true` then). What did not run goes back in front of what the
+   * effects above queued meanwhile, so the next turn starts with it.
    */
-  const drainLane = (queue: Computation[], limit: number): number => {
-    const batch = queue.splice(0, limit);
+  const drainLane = (queue: Computation[], turn: { deadline: number; ran: boolean }): boolean => {
+    const batch = queue.splice(0, queue.length);
     batch.sort(byCreation);
-    for (const effect of batch) {
+    for (let index = 0; index < batch.length; index += 1) {
+      const effect = batch[index] as Computation;
+      // Promoted to the urgent queue meanwhile: that queue runs it.
       if ((effect.flags & FLAG_TRANSITION) === 0) continue;
+      if (turn.ran && performance.now() >= turn.deadline) {
+        const arrived = queue.splice(0, queue.length);
+        // Loops, not a spread: a lane can hold more effects than a call takes arguments.
+        for (let rest = index; rest < batch.length; rest += 1)
+          queue.push(batch[rest] as Computation);
+        for (const late of arrived) queue.push(late);
+        return true;
+      }
       effect.flags &= ~(FLAG_QUEUED | FLAG_TRANSITION);
       if ((effect.flags & FLAG_DISPOSED) !== 0) continue;
       if (effect.pauses > 0) {
@@ -97,8 +114,9 @@ function createHooks(): Hooks {
         continue;
       }
       runQueued(effect);
+      turn.ran = true;
     }
-    return batch.length;
+    return false;
   };
 
   /** Resolves the transitions that wait for the lane, once the lane is idle. */
@@ -121,9 +139,9 @@ function createHooks(): Hooks {
   };
 
   /**
-   * Runs the transition lane: one chunk per macrotask, render effects first. Writes made here belong to
-   * the lane, so the effects they wake join it. Errors nobody handled are reported, not thrown, because
-   * no caller is waiting for this macrotask.
+   * Runs the transition lane: one turn of `LANE_SLICE_MS` per macrotask, render effects first. Writes
+   * made here belong to the lane, so the effects they wake join it. Errors nobody handled are reported,
+   * not thrown, because no caller is waiting for this macrotask.
    */
   const flushLane = (): void => {
     scheduled = false;
@@ -134,18 +152,17 @@ function createHooks(): Hooks {
     const previous = rt.inTransition;
     rt.inTransition = true;
     rt.flushing = true;
-    let budget = LANE_CHUNK;
+    const turn = { deadline: performance.now() + LANE_SLICE_MS, ran: false };
     let passes = 0;
     try {
-      while (budget > 0 && hasLanePending()) {
+      while (hasLanePending()) {
         passes += 1;
         if (passes > MAX_FLUSH_PASSES) {
           clearQueues();
           rt.uncaught.push(new ShadowError("INFINITE_LOOP"));
           break;
         }
-        const queue = laneRender.length > 0 ? laneRender : laneUser;
-        budget -= drainLane(queue, budget);
+        if (drainLane(laneRender.length > 0 ? laneRender : laneUser, turn)) break;
       }
     } finally {
       rt.inTransition = previous;

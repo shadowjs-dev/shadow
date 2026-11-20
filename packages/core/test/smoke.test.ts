@@ -14,6 +14,7 @@ describe("public surface", () => {
         "getOwner",
         "indexArray",
         "isDev",
+        "isPending",
         "isServer",
         "mapArray",
         "mergeProps",

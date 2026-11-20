@@ -57,8 +57,18 @@ export {
   wakeSuspended,
 } from "./internal/concurrency";
 export { DEVTOOLS_EVENT, report as devtoolsReport } from "./internal/devtools";
-export type { WarningListener } from "./internal/diagnostics";
-export { resetWarningDedupe, ShadowError, setWarningListener, warn } from "./internal/diagnostics";
+export type { ReportedDiagnostic, ReportOptions, WarningListener } from "./internal/diagnostics";
+export {
+  diagnosticUrl,
+  nameOwner,
+  ownerPath,
+  reportDiagnostic,
+  resetWarningDedupe,
+  ShadowError,
+  setWarningListener,
+  subscribeDiagnostics,
+  warn,
+} from "./internal/diagnostics";
 export { disposeTree as disposeOwner } from "./internal/dispose";
 export { isHydrating, withHydration } from "./internal/hydration-flag";
 export type { MessageCode } from "./internal/messages";
@@ -84,6 +94,7 @@ export type {
   ErrorHandler,
   Setter,
 } from "./internal/types";
+export { registerLoading } from "./pending";
 export type { Source as SourceNode };
 export { Computation as ComputationNode, Signal as SignalNode };
 

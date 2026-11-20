@@ -32,6 +32,15 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null;
 }
 
+/** Whether an update function returned a promise (it was declared `async`, or returned one). */
+function isThenable(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { then?: unknown }).then === "function"
+  );
+}
+
 function rangeKeys(range: { from?: number; to?: number; by?: number }, length: number): number[] {
   const from = range.from ?? 0;
   const to = range.to ?? length - 1;
@@ -189,6 +198,13 @@ function createDeepStore<T extends object>(initial: T, label: string): [Store<T>
           } finally {
             tx.open = false;
           }
+          if (isThenable(result)) {
+            throw new TypeError(
+              __DEV__
+                ? `ShadowStore${label}: the update function returned a promise. An update runs synchronously: what it wrote before its first \`await\` is kept, and nothing after it can be written. Await the data first, then call setStore().`
+                : "SHADOW_STORE_ASYNC_UPDATE",
+            );
+          }
           if (result !== undefined) replaceWith(root, result, label);
           return;
         }
@@ -274,8 +290,10 @@ function replaceWith(root: object, value: unknown, label: string): void {
  * @throws ShadowError `WRITE_IN_MEMO` from the setter, in development builds only, when it is called
  * while a {@link useMemo} computation runs. `setStore` throws TypeError (production messages
  * `SHADOW_STORE_*`) for an update it cannot apply: no argument, a bad path step, a path through a
- * value that is not an object, a reserved key such as `__proto__`, or a non-array value for an
- * array store. Writing to the store view itself throws TypeError (`SHADOW_STORE_READ_ONLY`).
+ * value that is not an object, a reserved key such as `__proto__`, a non-array value for an array
+ * store, or an update function that returns a promise (`SHADOW_STORE_ASYNC_UPDATE`: an update is
+ * synchronous, so await the data first). Writing to the store view itself throws TypeError
+ * (`SHADOW_STORE_READ_ONLY`).
  * @example
  * import { useStore } from "@shadow-js/core";
  *

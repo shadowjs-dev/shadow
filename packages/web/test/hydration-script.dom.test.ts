@@ -67,6 +67,51 @@ describe("HydrationScript (early event capture, GAP-CF-13)", () => {
     expect(dom.log.clicks).toBe(2);
   });
 
+  it("[HSC-06] a click whose event lost its target (dispatched inside a shadow root) is replayed on the recorded target", async () => {
+    const ssr = await fresh<{ App: () => unknown }>(APP, "ssr");
+    const dom = await fresh<{ App: () => unknown; log: { clicks: number } }>(APP);
+    const target = document.createElement("div");
+    target.innerHTML = renderToString(() => ssr.App());
+    document.body.append(target);
+    hosts.push(target);
+    // The platform clears `event.target` once the dispatch of an event from a shadow tree is over: an
+    // event that was never dispatched has the same empty target.
+    const event = new MouseEvent("click", { bubbles: true, cancelable: true });
+    expect(event.target).toBeNull();
+    Reflect.set(globalThis, "__SHADOWJS_EARLY__", {
+      queue: [event],
+      targets: [target.querySelector(".go")],
+      names: ["click"],
+      listener: () => undefined,
+    });
+    hydrate(() => dom.App(), target);
+    flushSync();
+    expect(dom.log.clicks).toBe(1);
+  });
+
+  it("[HSC-07] the capture script records the innermost node of an event that starts in an open shadow root", () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    hosts.push(host);
+    const inner = document.createElement("button");
+    host.attachShadow({ mode: "open" }).append(inner);
+    new Function(scriptBody(generateHydrationScript({})))();
+    const capture = Reflect.get(globalThis, "__SHADOWJS_EARLY__") as {
+      queue: Event[];
+      targets: unknown[];
+      names: string[];
+      listener: (event: Event) => void;
+    };
+    try {
+      inner.dispatchEvent(new MouseEvent("click", { bubbles: true, composed: true }));
+      expect(capture.queue).toHaveLength(1);
+      expect(capture.targets).toEqual([inner]);
+    } finally {
+      for (const name of capture.names) document.removeEventListener(name, capture.listener, true);
+      Reflect.deleteProperty(globalThis, "__SHADOWJS_EARLY__");
+    }
+  });
+
   it("[HSC-05] a page without the capture script hydrates and replays nothing", async () => {
     const dom = await fresh<{ App: () => unknown; log: { clicks: number } }>(APP);
     const target = document.createElement("div");

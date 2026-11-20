@@ -27,6 +27,7 @@ export {
   untrack,
   useId,
 } from "./ownership";
+export { isPending } from "./pending";
 export type { MergeProps, MergeSource, ResolvedChildren, SplitProps } from "./props";
 export { children, mergeProps, splitProps } from "./props";
 export { useReaction } from "./reaction";

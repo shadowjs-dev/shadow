@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.2.0
+
+### Added
+
+- `isPending(() => expression)`: true while a resource the expression reads, directly or through memos, loads for the first time or reloads. The expression is only evaluated to find what it reads: it holds no `<Suspense>` boundary and its errors are not thrown.
+- `@shadow-js/core/extend`: `registerLoading(source, loading)` makes a data primitive of your own visible to `isPending`.
+- `@shadow-js/core/extend`: `ownerPath(owner)` (where an owner sits: `<App> > <TodoList> > memo`), `nameOwner(owner, name)`, `diagnosticUrl(code)`, `subscribeDiagnostics(listener)` (every reported diagnostic as data: `code`, `message`, `ownerPath`, `url`), `reportDiagnostic(code, message, options?)` (a library's own warning through the same channel: `key`, the `url` of its own page, `every` for a diagnostic about one event) and the types `ReportedDiagnostic` and `ReportOptions`.
+- `skills/diagnostics/` in the package: `SKILL.md`, the runtime sections of the diagnostics page for this version, and `diagnostics.json`, one entry per code (whether it warns or throws, what it means, the fix, the page address).
+- The `ShadowError` constructor takes the owner the error belongs to as an optional second argument.
+
+### Changed
+
+- Development warnings and `ShadowError` messages continue on more lines: the owner path, when there is one, and the address of the code's section on the diagnostics page; the first report of a code also names the offline guide. The first line (`[shadow CODE] text`), `formatMessage`, the `code` property and the arguments a `setWarningListener` listener receives are unchanged. Production builds are unchanged.
+- `warn` reports a code once per place (the owner path of the code that was running, at most sixteen places per code) instead of once for the whole program. A listener of `setWarningListener` is therefore called once per place too.
+- `INFINITE_LOOP` names an effect of the loop in its owner path.
+- The transition lane yields by time: a turn runs for 5 ms and always at least one effect, where it ran 64 effects whatever they cost.
+- `mergeProps` skips `0`, `0n`, `NaN` and `""` as it skips `null`, `undefined` and `false`, for a source and for what a source function returns. `MergeSource` accepts them.
+
+### Fixed
+
+- `useResource`: a source that turns `null`, `undefined` or `false` after a failed load clears `error` with the state.
+- `useResource`: a `<Suspense>` boundary is given back when the last reader that held it is disposed while the load is still running (one microtask later, so a reader that only runs again keeps it). The boundary showed its fallback until a load ended that nothing under it read any more.
+- `useStore`: an update function that returns a promise throws a `TypeError` that names the mistake (production message `SHADOW_STORE_ASYNC_UPDATE`). What ran before the first `await` is written, as before; nothing after it can be.
+- `useStore`: the descriptor of a non-configurable, writable property (an object passed through `Object.seal`) carries the store view of a nested object, as reading the property does.
+
 ## 1.1.2
 
 ### Changed

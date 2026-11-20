@@ -7,6 +7,7 @@ import {
   useContext,
   useRenderEffect,
 } from "@shadow-js/core";
+import { diagnosticUrl, reportDiagnostic } from "@shadow-js/core/extend";
 import {
   bindRegion,
   childScope,
@@ -208,8 +209,13 @@ export function Portal(props: PortalProps): null {
         adopted = undefined;
         if (__DEV__ && !warned) {
           warned = true;
-          console.warn(
+          reportDiagnostic(
+            "PORTAL_TARGET_MISSING",
             "[shadow PORTAL_TARGET_MISSING] Portal has no mount element; nothing is rendered.",
+            {
+              url: diagnosticUrl("PORTAL_TARGET_MISSING"),
+              every: true,
+            },
           );
         }
         return;

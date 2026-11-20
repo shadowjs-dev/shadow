@@ -241,8 +241,8 @@ describe("transitions: lane scheduling", () => {
     expect(runs).toEqual([1]);
   });
 
-  it("[TRN-12] a large lane is applied in chunks, and an urgent write lands between two chunks", async () => {
-    const TOTAL = 300;
+  it("[TRN-12] a lane of expensive effects is applied over several turns, and an urgent write lands between two", async () => {
+    const TOTAL = 12;
     let laneRuns = 0;
     const urgent: number[] = [];
     let setA: (next: number) => void = () => undefined;
@@ -257,15 +257,20 @@ describe("transitions: lane scheduling", () => {
       });
       for (let i = 0; i < TOTAL; i += 1) {
         useEffect(() => {
-          if (b() === 1) laneRuns += 1;
+          if (b() !== 1) return;
+          // Busy on purpose: a turn of the lane ends when its time is used, so the effects must cost time.
+          const until = performance.now() + 3;
+          while (performance.now() < until) laneRuns += 0;
+          laneRuns += 1;
         });
       }
     });
     flushSync();
     laneRuns = 0;
     urgent.length = 0;
-    void startTransition(() => setB(1));
+    const applied = startTransition(() => setB(1));
     await tick();
+    // One turn runs at least one effect and stops once its 5 ms are used: 12 effects of 3 ms never fit.
     expect(laneRuns).toBeGreaterThan(0);
     expect(laneRuns).toBeLessThan(TOTAL);
     const before = laneRuns;
@@ -273,8 +278,35 @@ describe("transitions: lane scheduling", () => {
     await micro();
     expect(urgent).toEqual([7]);
     expect(laneRuns).toBe(before);
-    for (let i = 0; i < 10 && laneRuns < TOTAL; i += 1) await tick();
+    await applied;
     expect(laneRuns).toBe(TOTAL);
+  });
+
+  it("[TRN-12b] a lane of cheap effects needs few turns: it is not held to a count of effects per turn", async () => {
+    const TOTAL = 2000;
+    let runs = 0;
+    let set: (next: number) => void = () => undefined;
+    createRoot(() => {
+      const [value, write] = useSignal(0);
+      set = write;
+      for (let i = 0; i < TOTAL; i += 1) {
+        useEffect(() => {
+          if (value() === 1) runs += 1;
+        });
+      }
+    });
+    flushSync();
+    const applied = startTransition(() => set(1));
+    let turns = 0;
+    while (runs < TOTAL && turns < 64) {
+      await tick();
+      turns += 1;
+    }
+    expect(runs).toBe(TOTAL);
+    // 64 effects a turn would need 32 turns. A turn of 5 ms runs all 2,000 on an idle machine; the bound
+    // leaves room for a machine so busy that a turn gets a fraction of its time.
+    expect(turns).toBeLessThan(16);
+    await applied;
   });
 
   it("[TRN-13] startTransition with no writes resolves at once", async () => {

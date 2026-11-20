@@ -69,7 +69,10 @@ function describeChild(
 ): PropertyDescriptor | undefined {
   const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
   if (descriptor === undefined || typeof key === "symbol") return descriptor;
-  if (descriptor.configurable === false) return descriptor;
+  // Only a property that can never change must report its own value (a proxy invariant). One that is
+  // sealed but writable reports the view, as reading it does: the raw object would let a caller change
+  // the store with no notification.
+  if (descriptor.configurable === false && descriptor.writable !== true) return descriptor;
   const value: unknown = descriptor.value;
   if (!isWrappable(value)) return descriptor;
   return { ...descriptor, value: wrap(value) };

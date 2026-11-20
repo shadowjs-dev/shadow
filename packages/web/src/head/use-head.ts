@@ -8,6 +8,7 @@ import {
   useRenderEffect,
   useSignal,
 } from "@shadow-js/core";
+import { diagnosticUrl, reportDiagnostic } from "@shadow-js/core/extend";
 import { createHeadRegistry, type HeadRegistry } from "./registry";
 import { ServerHeadContext } from "./server-head";
 import { createDomHeadSink } from "./sink";
@@ -93,7 +94,14 @@ export function useHead(input: HeadInput | (() => HeadInput)): void {
   }
   if (getOwner() === null) {
     if (__DEV__) {
-      console.warn("[shadow HEAD_OUTSIDE_OWNER] useHead() needs an owner; nothing was registered.");
+      reportDiagnostic(
+        "HEAD_OUTSIDE_OWNER",
+        "[shadow HEAD_OUTSIDE_OWNER] useHead() needs an owner; nothing was registered.",
+        {
+          url: diagnosticUrl("HEAD_OUTSIDE_OWNER"),
+          every: true,
+        },
+      );
     }
     return;
   }

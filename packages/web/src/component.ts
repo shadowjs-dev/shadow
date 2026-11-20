@@ -3,6 +3,7 @@ import {
   createOwner,
   DEVTOOLS_EVENT,
   devtoolsReport,
+  nameOwner,
   runInScope,
 } from "@shadow-js/core/extend";
 import { currentScope, enterComponent } from "./internal/hydration-scope";
@@ -41,6 +42,8 @@ export function createComponent<P>(
     // even though the browser creates more owners (effects) than the server does.
     const owner = createOwner();
     owner.idPrefix = currentScope()?.id;
+    // Diagnostics raised below say which component they came from.
+    if (__DEV__) nameOwner(owner, componentNames.get(component) ?? "Component");
     // One scope switch (owner in, listener off): deep component trees are bounded by the call stack.
     const result = runInScope({ owner, listener: null }, () => component(props));
     if (__DEV__) {

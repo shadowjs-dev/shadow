@@ -13,18 +13,20 @@ export type WebWarningCode =
   | "SRCDOC_DYNAMIC"
   | "DYNAMIC_SVG_CASE";
 
-/** The codes reported, and the `code:key` pairs of the warnings that pass a key. */
-const seen = new Set<string>();
+import { diagnosticUrl, reportDiagnostic, resetWarningDedupe } from "@shadow-js/core/extend";
 
 /**
- * Prints a development warning as `[shadow CODE] detail`, at most once per code for the life of the
- * page or process (the same pattern as core's `warn`): for a custom renderer that refuses a value the
- * way the built-in ones do. Production builds print nothing.
+ * Prints a development warning as `[shadow CODE] detail`, followed by where it happened in the owner
+ * tree and the page that explains the code, once per code and place (the same channel as core's
+ * `warn`, so `subscribeDiagnostics` of `@shadow-js/core/extend` hears it): for a custom renderer that
+ * refuses a value the way the built-in ones do. Production builds print nothing.
  *
- * @param code The diagnostic code. A code that was already reported is ignored, whatever the detail.
+ * @param code The diagnostic code. A code already reported from the same place (the owner path of
+ *   the component that was running) is ignored, whatever the detail.
  * @param detail The text after the code.
- * @param key Optional. With a key the warning is once per `code` and `key` instead of once per code, for a
- *   warning about a name where each name deserves a report. Pass a bounded set of keys: each is remembered.
+ * @param key Optional. With a key the warning is once per `code` and `key` instead of once per code
+ *   and place, for a warning about a name where each name deserves a report. Pass a bounded set
+ *   of keys: at most 256 of one code are reported.
  * @example
  * import { isUnsafeUrlAttribute, warnOnce } from "@shadow-js/web/extend";
  *
@@ -38,11 +40,8 @@ const seen = new Set<string>();
  * @since 1.0.0
  */
 export function warnOnce(code: WebWarningCode, detail: string, key?: string): void {
-  if (!__DEV__) return;
-  const id = key === undefined ? code : `${code}:${key}`;
-  if (seen.has(id)) return;
-  seen.add(id);
-  console.warn(`[shadow ${code}] ${detail}`);
+  if (__DEV__)
+    reportDiagnostic(code, `[shadow ${code}] ${detail}`, { key, url: diagnosticUrl(code) });
 }
 
 /**
@@ -53,9 +52,20 @@ export function warnOnce(code: WebWarningCode, detail: string, key?: string): vo
 export const SRCDOC_DYNAMIC_DETAIL =
   'A computed value was written to "srcdoc". It is an HTML document the frame runs, with the trust of innerHTML: sanitize it, and add the sandbox attribute to the frame.';
 
+/**
+ * Prints a development warning about one event (a hydration mismatch, a call with no owner) on the
+ * shared channel, every time it happens: `[shadow CODE] detail`, where it happened and the page that
+ * explains the code. Production builds print nothing.
+ * @internal
+ */
+export function warnEvent(code: string, detail: string): void {
+  if (__DEV__)
+    reportDiagnostic(code, `[shadow ${code}] ${detail}`, { url: diagnosticUrl(code), every: true });
+}
+
 /** Forgets which codes were already reported. Used by tests; not part of the public surface. @internal */
 export function resetWebWarningDedupe(): void {
-  seen.clear();
+  resetWarningDedupe();
 }
 
 /**

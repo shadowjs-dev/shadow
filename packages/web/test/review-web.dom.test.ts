@@ -103,7 +103,7 @@ describe("review round: portal hydration", () => {
     hydrate(() => createComponent(dom.Targeted, {}), root, {});
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     const warn = vi.mocked(console.warn);
-    expect(warn.mock.calls.map((call) => String(call[0]))).toEqual([
+    expect(warn.mock.calls.map((call) => String(call[0]).split("\n")[0])).toEqual([
       "[shadow PORTAL_TARGET_MISSING] Portal has no mount element; nothing is rendered.",
     ]);
     warn.mockClear();

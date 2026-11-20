@@ -33,7 +33,8 @@ function click(target: Element | null | undefined): void {
 }
 /** The console.warn messages raised so far (the setup fails the test on any that are not consumed). */
 function warnings(): string[] {
-  return vi.mocked(console.warn).mock.calls.map((args) => String(args[0]));
+  // The first line is the text; the lines after it say where it happened and which page explains it.
+  return vi.mocked(console.warn).mock.calls.map((args) => String(args[0]).split("\n")[0] ?? "");
 }
 /** Consumes the warnings raised so far, so only later output is checked. */
 function takeWarnings(): string[] {

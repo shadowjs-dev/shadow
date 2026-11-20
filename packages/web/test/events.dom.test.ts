@@ -117,6 +117,17 @@ describe("delegated handlers", () => {
     expect(captured?.currentTarget).toBeNull();
   });
 
+  it("[EVT-15b] currentTarget is a plain value during the call: no function is made per handler", () => {
+    const outer = mount("section");
+    let descriptor: PropertyDescriptor | undefined;
+    setExpando(outer, "$$click", (event: Event) => {
+      descriptor = Object.getOwnPropertyDescriptor(event, "currentTarget");
+    });
+    click(outer);
+    expect(descriptor?.value).toBe(outer);
+    expect(descriptor?.get).toBeUndefined();
+  });
+
   it("[EVT-16] event.target is the element that was clicked", () => {
     const outer = mount("section");
     const inner = document.createElement("span");

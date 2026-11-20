@@ -40,7 +40,7 @@ export function runQueued(effect: Computation): void {
 }
 
 /** Runs every queued effect of one phase, parents before children, siblings by creation. */
-function drain(queue: Computation[]): number {
+function drain(queue: Computation[], loop: { last: Computation | null } | undefined): number {
   const batch = queue.splice(0, queue.length);
   // Effects mostly arrive in creation order already: the sort then finds one ascending run and is O(n).
   batch.sort(byCreation);
@@ -52,6 +52,9 @@ function drain(queue: Computation[]): number {
       effect.flags = (effect.flags & ~FLAG_TRANSITION) | FLAG_PARKED;
       continue;
     }
+    // The effect that ran last is the one a loop report names: in a loop it is one of the effects that
+    // keep waking each other.
+    if (__DEV__ && loop !== undefined) loop.last = effect;
     runQueued(effect);
   }
   return batch.length;
@@ -93,6 +96,8 @@ export function flush(): void {
   rt.flushing = true;
   let passes = 0;
   let runs = 0;
+  // Development only: production builds make no object per flush for a report they do not print.
+  const loop: { last: Computation | null } | undefined = __DEV__ ? { last: null } : undefined;
   if (__DEV__) report(DEVTOOLS_EVENT.FLUSH_START, renderQueue.length, userQueue.length);
   try {
     while (hasPending()) {
@@ -101,10 +106,10 @@ export function flush(): void {
       passes += 1;
       if (passes > MAX_FLUSH_PASSES) {
         clearQueues();
-        rt.uncaught.push(new ShadowError("INFINITE_LOOP"));
+        rt.uncaught.push(new ShadowError("INFINITE_LOOP", loop?.last));
         break;
       }
-      const ran = drain(renderQueue.length > 0 ? renderQueue : userQueue);
+      const ran = drain(renderQueue.length > 0 ? renderQueue : userQueue, loop);
       if (__DEV__) runs += ran;
     }
   } finally {

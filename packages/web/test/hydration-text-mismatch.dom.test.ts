@@ -39,7 +39,14 @@ function mismatchReports(reports: Report[]): Report[] {
 /** The text of every console.warn raised since the last call, and clears the spy. */
 function takeWarnings(): string[] {
   const spy = vi.mocked(console.warn);
-  const texts = spy.mock.calls.map((args) => args.map((arg) => String(arg)).join(" "));
+  // The first line is the text; the lines after it say where it happened and which page explains it.
+  const texts = spy.mock.calls.map(
+    (args) =>
+      args
+        .map((arg) => String(arg))
+        .join(" ")
+        .split("\n")[0] ?? "",
+  );
   spy.mockClear();
   return texts;
 }

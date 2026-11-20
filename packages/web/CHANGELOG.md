@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2.0
+
+### Changed
+
+- Development warnings of the DOM runtime (`warnOnce` of `@shadow-js/web/extend`) go through core's diagnostics channel: they continue with the owner path and the address of the code's section on the diagnostics page, they are reported once per place, `subscribeDiagnostics` of `@shadow-js/core/extend` hears them, and `resetWarningDedupe` forgets them. In development builds a component's owner carries the component's name, which is what the owner path shows.
+- The hydration warnings (`HYDRATION_KEY_MISS`, `HYDRATION_MISMATCH`, `HYDRATION_TEXT_MISMATCH`), `PORTAL_TARGET_MISSING` and `HEAD_OUTSIDE_OWNER` go through the same channel. They are still reported every time they happen (each names one event), and their first line is unchanged; the lines after it give the owner path and the page.
+- The early event capture script also records where each event started (55 more bytes in the inline script).
+
+### Fixed
+
+- A click or an input made before hydration inside a shadow root is replayed. The platform clears `event.target` once the dispatch of an event from a shadow tree is over, so the replay had nowhere to send it.
+- A delegated handler's `currentTarget` is a plain value, not a getter made for each handler on the path.
+
 ## 1.1.2
 
 ### Changed

@@ -1,4 +1,5 @@
 import { DEVTOOLS_EVENT, devtoolsReport } from "@shadow-js/core/extend";
+import { warnEvent } from "./diagnostics";
 
 /** What a hydration pass in progress knows. Exists only while `hydrate()` runs its synchronous pass. */
 interface HydrationState {
@@ -128,7 +129,7 @@ export function claimElement(key: string | undefined): Element | null {
     // Production keeps only the code (the same split as core's messages): the text stays out of the bundle.
     if (__DEV__) {
       const message = `No server element for key "${key}".`;
-      console.warn(`[shadow HYDRATION_KEY_MISS] ${message}`);
+      warnEvent("HYDRATION_KEY_MISS", message);
       devtoolsReport(DEVTOOLS_EVENT.HYDRATION_MISMATCH, message, key, undefined);
     }
     current.recoverable?.(
@@ -197,7 +198,7 @@ export function checkClaimedTag(element: Element, expectedTag: string): void {
   const text = element.textContent ?? "";
   let detail = `expected <${expected}> but the server sent <${snippet(actual, 80)}>; server markup: "${snippet(openingMarkup(element), 80)}"`;
   if (text !== "") detail += `; text: "${snippet(text, 40)}"`;
-  console.warn(`[shadow HYDRATION_MISMATCH] ${detail}`);
+  warnEvent("HYDRATION_MISMATCH", detail);
   devtoolsReport(DEVTOOLS_EVENT.HYDRATION_MISMATCH, detail, undefined, undefined);
 }
 
@@ -238,7 +239,7 @@ export function checkClaimedText(
   }
   if (expected === server) return;
   const detail = `expected text "${snippet(expected, 40)}" but the server sent text "${snippet(server, 40)}"`;
-  console.warn(`[shadow HYDRATION_TEXT_MISMATCH] ${detail}`);
+  warnEvent("HYDRATION_TEXT_MISMATCH", detail);
   devtoolsReport(DEVTOOLS_EVENT.HYDRATION_MISMATCH, detail, undefined, undefined);
 }
 

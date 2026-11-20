@@ -31,7 +31,9 @@ function dispatchDelegated(event: Event): void {
       if (typeof fn !== "function") continue;
       const data = Reflect.get(node, dataKey);
       try {
-        Object.defineProperty(event, "currentTarget", { configurable: true, get: () => node });
+        // A value, not a getter: a getter is one more function per handler on the path, and one that
+        // holds the node.
+        Object.defineProperty(event, "currentTarget", { configurable: true, value: node });
         untrack(() =>
           (fn as Handler).call(node, ...(data === undefined ? [event] : [data, event])),
         );

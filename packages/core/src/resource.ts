@@ -2,6 +2,7 @@ import { useContext } from "./context";
 import { useRenderEffect } from "./effect";
 import {
   type Accessor,
+  addCleanup,
   batch,
   currentListener,
   currentOwner,
@@ -9,11 +10,13 @@ import {
   devtoolsReport,
   holdReader,
   inTransition,
+  type Owner,
   readSignal,
   SignalNode,
   writeSignal,
 } from "./extend";
 import { onCleanup, untrack } from "./ownership";
+import { registerLoading } from "./pending";
 import { ResourceCacheContext, SuspenseContext, type SuspenseTracker } from "./suspense";
 
 /**
@@ -96,13 +99,14 @@ export interface Resource<T> extends Accessor<T | undefined> {
  * A signal cell whose writes are allowed everywhere (see {@link createSignalNode}). `distinct`
  * false notifies on every write, true only when the value changes.
  */
-function cell<T>(initial: T, distinct: boolean): [Accessor<T>, (next: T) => void] {
+function cell<T>(initial: T, distinct: boolean): [Accessor<T>, (next: T) => void, SignalNode<T>] {
   const node = new SignalNode<T>(initial, distinct ? Object.is : false);
   return [
     () => readSignal(node),
     (next) => {
       writeSignal(node, next, { allowInMemo: true });
     },
+    node,
   ];
 }
 
@@ -213,8 +217,15 @@ export function useResource<S, T>(
   const hasInitial = "initialValue" in options;
   // Extension-API cells: a resource may be created (and so start loading) while a memo computes,
   // for example when a router renders a route inside one. Its own state is not a derived value.
-  const [value, setValue] = cell<T | undefined>(options.initialValue, false);
-  const [state, writeState] = cell<ResourceState>(hasInitial ? "ready" : "unresolved", true);
+  const [value, setValue, valueNode] = cell<T | undefined>(options.initialValue, false);
+  const [state, writeState, stateNode] = cell<ResourceState>(
+    hasInitial ? "ready" : "unresolved",
+    true,
+  );
+  const loading = (): boolean => state() === "pending" || state() === "refreshing";
+  // What readers of the value and of the state track: `isPending` finds the resource through either.
+  registerLoading(valueNode, loading);
+  registerLoading(stateNode, loading);
   // Filled below with the accessor users hold, so devtools can name the resource that changed.
   let handle: unknown;
   const setState = (next: ResourceState): void => {
@@ -235,17 +246,48 @@ export function useResource<S, T>(
   let lastSource: S | undefined;
   let hasValue = hasInitial;
   // Boundaries held by readers: whoever reads this resource while it is pending, inside a
-  // <Suspense>, keeps that boundary showing its fallback until the first load settles.
-  const holders = new Set<SuspenseTracker>();
+  // <Suspense>, keeps that boundary showing its fallback until the first load settles. Each boundary
+  // maps to the owners that read under it, or to null when a read had no owner (nothing then says
+  // when that reader is gone, so the boundary is held until the load settles).
+  const holders = new Map<SuspenseTracker, Set<Owner> | null>();
 
   const release = (): void => {
     if (holders.size === 0) return;
-    const held = [...holders];
+    const held = [...holders.keys()];
     holders.clear();
     for (const tracker of held) tracker.decrement();
   };
 
-  /** Applies a result unless a newer load or a dispose made it stale; says whether it applied. */
+  /** Holds `tracker` for the reader that is running, and lets go of it when every reader is gone. */
+  const hold = (tracker: SuspenseTracker): void => {
+    const owner = currentOwner();
+    let readers = holders.get(tracker);
+    if (readers === undefined) {
+      readers = owner === null ? null : new Set();
+      holders.set(tracker, readers);
+      tracker.increment();
+    }
+    if (owner === null) {
+      holders.set(tracker, null);
+      return;
+    }
+    if (readers === null || readers.has(owner)) return;
+    readers.add(owner);
+    addCleanup(owner, () => {
+      const live = holders.get(tracker);
+      if (live === null || live === undefined || !live.delete(owner) || live.size > 0) return;
+      // The last reader under this boundary went away or is about to run again (its cleanups run
+      // first, then it reads again). Decided one microtask later, when a reader that runs again has:
+      // a boundary nobody waits under must not keep its fallback until a load it does not show ends.
+      queueMicrotask(() => {
+        const now = holders.get(tracker);
+        if (now === null || now === undefined || now.size > 0) return;
+        holders.delete(tracker);
+        tracker.decrement();
+      });
+    });
+  };
+
   const settle = (id: number, apply: () => void): boolean => {
     if (disposed || id !== version) return false;
     // The flush that ends the batch throws what no handler took (a reader that failed): the boundary
@@ -336,7 +378,12 @@ export function useResource<S, T>(
       controller?.abort();
       version += 1;
       release();
-      setState(hasValue ? "ready" : "unresolved");
+      // The failure belonged to the load this source asked for: with no source there is no load, so
+      // `error` must not keep reporting it next to a state that says nothing failed.
+      batch(() => {
+        setFailure(undefined);
+        setState(hasValue ? "ready" : "unresolved");
+      });
       return;
     }
     lastSource = input;
@@ -347,10 +394,7 @@ export function useResource<S, T>(
     if (current === "errored") throw failure();
     if (current === "pending") {
       const tracker = useContext(SuspenseContext);
-      if (tracker !== null && !holders.has(tracker)) {
-        holders.add(tracker);
-        tracker.increment();
-      }
+      if (tracker !== null) hold(tracker);
       // A transition reading pending data inside a boundary that shows content: the reader keeps its
       // previous value instead of showing this loading state (React's "keep content while suspended").
       if (tracker !== null && currentListener() !== null && inTransition()) holdReader(tracker);
@@ -360,7 +404,7 @@ export function useResource<S, T>(
 
   Object.defineProperties(read, {
     state: { get: state },
-    loading: { get: () => state() === "pending" || state() === "refreshing" },
+    loading: { get: loading },
     error: { get: failure },
     latest: { get: value },
     refetch: {
